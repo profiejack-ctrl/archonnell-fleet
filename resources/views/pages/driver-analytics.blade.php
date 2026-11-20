@@ -4,53 +4,8 @@
    Logistics 2 Fleet Management System
    ────────────────────────────────────────────────────────────── */
 
-// ── Driver Analytics built from the real database ─────────────
-$driverRows = \Illuminate\Support\Facades\DB::table('drivers')
-    ->leftJoin('users', 'drivers.user_id', '=', 'users.id')
-    ->leftJoin('trip_records', 'trip_records.driver_id', '=', 'drivers.id')
-    ->select(
-        'drivers.id',
-        'users.name as user_name',
-        'drivers.name as driver_name',
-        'drivers.employee_id',
-        'drivers.role',
-        'drivers.status',
-        'drivers.score',
-        \Illuminate\Support\Facades\DB::raw('COUNT(trip_records.id) as total_trips'),
-        \Illuminate\Support\Facades\DB::raw("SUM(CASE WHEN trip_records.status = 'Completed' THEN 1 ELSE 0 END) as completed"),
-        \Illuminate\Support\Facades\DB::raw("SUM(CASE WHEN trip_records.status IS NOT NULL AND LOWER(trip_records.status) LIKE '%delay%' THEN 1 ELSE 0 END) as delayed"),
-        \Illuminate\Support\Facades\DB::raw('COALESCE(SUM(trip_records.total_distance), 0) as distance'),
-        \Illuminate\Support\Facades\DB::raw('COALESCE(SUM(trip_records.fuel_consumption), 0) as fuel')
-    )
-    ->groupBy('drivers.id', 'users.name', 'drivers.name', 'drivers.employee_id', 'drivers.role', 'drivers.status', 'drivers.score')
-    ->orderByDesc('drivers.score')
-    ->get();
-
-$driverData = [];
-foreach ($driverRows as $i => $row) {
-    $name = $row->user_name ?: ($row->driver_name ?: 'Driver');
-    $score = (float)($row->score ?? 0);
-    $distance = (float)$row->distance;
-    $fuel = (float)$row->fuel;
-    $driverData[] = [
-        'id' => (int)$row->id,
-        'name' => $name,
-        'employee_id' => $row->employee_id,
-        'role' => $row->role,
-        'status' => $row->status,
-        'score' => round($score, 1),
-        'on_time' => 0,
-        'fuel_eff' => 0,
-        'safety' => 0,
-        'attendance' => 0,
-        'total_trips' => (int)$row->total_trips,
-        'completed' => (int)$row->completed,
-        'delayed' => (int)$row->delayed,
-        'km_per_liter' => $fuel > 0 ? round($distance / $fuel, 1) : 0,
-        'risk' => $score >= 90 ? 'Low' : ($score >= 70 ? 'Medium' : 'High'),
-        'rank' => $i + 1,
-    ];
-}
+// ── Driver Analytics loaded strictly from Centralized Backend Services ───
+$driverData = $dashboard['driverData'] ?? [];
 
 $totalDrivers   = count($driverData);
 $activeDrivers  = count(array_filter($driverData, fn($dr) => strtolower((string)($dr['status'] ?? '')) === 'active'));
@@ -59,34 +14,7 @@ $topDriver      = $driverData[0] ?? ['name' => 'N/A', 'score' => 0, 'employee_id
 $lowestDriver   = $driverData[$totalDrivers - 1] ?? $topDriver;
 $totalTrips     = array_sum(array_column($driverData, 'total_trips'));
 
-$tripRecords = collect(\Illuminate\Support\Facades\DB::table('trip_records')
-        ->leftJoin('drivers', 'drivers.id', '=', 'trip_records.driver_id')
-        ->leftJoin('users', 'users.id', '=', 'drivers.user_id')
-        ->leftJoin('vehicles', 'vehicles.id', '=', 'trip_records.vehicle_id')
-        ->orderByDesc('trip_records.id')
-        ->limit(12)
-        ->get(['trip_records.*', 'users.name as user_name', 'drivers.name as driver_name', 'vehicles.vehicle_code'])
-    )->map(function ($t) {
-        $driverName = $t->user_name ?: ($t->driver_name ?: 'Unassigned');
-        $depart = $t->departure_time ? date('H:i', strtotime($t->departure_time)) : '—';
-        $arrive = $t->actual_arrival ? date('H:i', strtotime($t->actual_arrival)) : null;
-        return [
-            'id' => 'TRP-' . $t->id,
-            'driver' => $driverName,
-            'vehicle' => $t->vehicle_code ?? '—',
-            'origin' => $t->origin ?? '—',
-            'dest' => $t->destination ?? '—',
-            'depart' => $depart,
-            'arrive' => $arrive,
-            'duration' => $t->total_duration ? $t->total_duration . 'm' : '—',
-            'distance' => $t->total_distance !== null ? number_format((float)$t->total_distance, 1) . ' km' : '—',
-            'avg_speed' => ($t->total_distance !== null && $t->total_duration > 0)
-                ? round(((float)$t->total_distance) / ($t->total_duration / 60), 1) . ' km/h'
-                : '—',
-            'fuel' => $t->fuel_consumption !== null ? number_format((float)$t->fuel_consumption, 1) . ' L' : '—',
-            'status' => $t->status,
-        ];
-    })->all();
+$tripRecords = $dashboard['tripRecords'] ?? [];
 
 // No safety-event table exists yet; show an empty state instead of fake incidents.
 $safetyEvents = [];
@@ -97,16 +25,10 @@ $monthlyTrips  = [];
 $fuelMonthly   = [];
 for ($i = 7; $i >= 0; $i--) {
     $monthStart = date('Y-m-01', strtotime("first day of -{$i} month"));
-    $monthEnd   = date('Y-m-t', strtotime($monthStart));
-    $agg = \Illuminate\Support\Facades\DB::table('trip_records')
-        ->whereBetween('created_at', [$monthStart . ' 00:00:00', $monthEnd . ' 23:59:59'])
-        ->selectRaw('COUNT(*) as trips, COALESCE(SUM(total_distance),0) as distance, COALESCE(SUM(fuel_consumption),0) as fuel')
-        ->first();
-
     $monthlyLabels[] = date('M', strtotime($monthStart));
     $monthlyScores[] = $avgScore;
-    $monthlyTrips[]  = (int)($agg->trips ?? 0);
-    $fuelMonthly[]   = ($agg->fuel ?? 0) > 0 ? round(((float)$agg->distance) / (float)$agg->fuel, 1) : 0;
+    $monthlyTrips[]  = 0;
+    $fuelMonthly[]   = 0;
 }
 ?>
 

@@ -39,4 +39,12 @@ return [
         ],
     ],
 
+    'central_api' => [
+        'base_url' => env('CENTRAL_API_URL', env('CENTRAL_GATEWAY_URL', 'http://localhost:4000/api/v1')),
+        'auth_url' => env('CENTRAL_AUTH_URL', 'http://localhost:4000/api/v1/auth'),
+        'service_email' => env('CENTRAL_SERVICE_EMAIL', 'admin@archonnell.com'),
+        'service_password' => env('CENTRAL_SERVICE_PASSWORD', 'Admin123!'),
+        'timeout' => (int) env('CENTRAL_API_TIMEOUT', 4),
+    ],
+
 ];

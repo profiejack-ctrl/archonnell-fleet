@@ -56,20 +56,24 @@ foreach (($dashboard['vehicles'] ?? []) as $fleetVehicle) {
                 </thead>
                 <tbody id="vehicle-table-body">
                     <?php foreach (($dashboard['vehicles'] ?? []) as $vehicle): ?>
-                        <tr data-status="<?= in_array(strtolower($vehicle->status), ['active', 'available'], true) ? 'available' : strtolower(htmlspecialchars($vehicle->status, ENT_QUOTES, 'UTF-8')) ?>">
-                            <td><strong class="vehicle-id-text"><?= htmlspecialchars($vehicle->vehicle_code, ENT_QUOTES, 'UTF-8') ?></strong></td>
-                            <td><span class="plate-no-link"><?= htmlspecialchars($vehicle->plate_number, ENT_QUOTES, 'UTF-8') ?></span></td>
+                        <tr data-status="<?= in_array(strtolower($vehicle->status ?? ''), ['active', 'available'], true) ? 'available' : strtolower(htmlspecialchars($vehicle->status ?? '', ENT_QUOTES, 'UTF-8')) ?>">
+                            <td><strong class="vehicle-id-text"><?= htmlspecialchars($vehicle->vehicle_code ?? ($vehicle->plate_number ?? '—'), ENT_QUOTES, 'UTF-8') ?></strong></td>
+                            <td><span class="plate-no-link"><?= htmlspecialchars($vehicle->plate_number ?? '—', ENT_QUOTES, 'UTF-8') ?></span></td>
                             <td><?= htmlspecialchars($vehicle->type ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
                             <td><?= htmlspecialchars($vehicle->name ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
-                            <td><span class="status-pill-badge"><?= htmlspecialchars($vehicle->status, ENT_QUOTES, 'UTF-8') ?></span></td>
+                            <td><span class="status-pill-badge"><?= htmlspecialchars($vehicle->status ?? '—', ENT_QUOTES, 'UTF-8') ?></span></td>
                             <td class="text-right">
-                                <button type="button" class="action-btn view-link" onclick="viewVehicleDetails(this)" data-code="<?= htmlspecialchars($vehicle->vehicle_code, ENT_QUOTES, 'UTF-8') ?>" data-plate="<?= htmlspecialchars($vehicle->plate_number, ENT_QUOTES, 'UTF-8') ?>" data-type="<?= htmlspecialchars($vehicle->type ?? '', ENT_QUOTES, 'UTF-8') ?>" data-name="<?= htmlspecialchars($vehicle->name ?? '', ENT_QUOTES, 'UTF-8') ?>" data-odometer="<?= (int) ($vehicle->odometer ?? 0) ?>" data-status="<?= htmlspecialchars($vehicle->status, ENT_QUOTES, 'UTF-8') ?>">View</button>
-                                <button type="button" class="action-btn" onclick="openMaintenanceModal(<?= (int) $vehicle->id ?>, <?= htmlspecialchars(json_encode($vehicle->vehicle_code.' · '.$vehicle->plate_number), ENT_QUOTES, 'UTF-8') ?>)">Maintenance<?= $vehicle->maintenanceIssues->where('status', '!=', 'Resolved')->count() ? ' ('.$vehicle->maintenanceIssues->where('status', '!=', 'Resolved')->count().')' : '' ?></button>
-                                <?php if ($dashboard['isAdmin']): ?><button type="button" class="action-btn edit-link" onclick="editVehicle(this)" data-id="<?= (int) $vehicle->id ?>" data-code="<?= htmlspecialchars($vehicle->vehicle_code, ENT_QUOTES, 'UTF-8') ?>" data-plate="<?= htmlspecialchars($vehicle->plate_number, ENT_QUOTES, 'UTF-8') ?>" data-type="<?= htmlspecialchars($vehicle->type ?? '', ENT_QUOTES, 'UTF-8') ?>" data-name="<?= htmlspecialchars($vehicle->name ?? '', ENT_QUOTES, 'UTF-8') ?>" data-odometer="<?= (int) ($vehicle->odometer ?? 0) ?>" data-status="<?= htmlspecialchars($vehicle->status, ENT_QUOTES, 'UTF-8') ?>">Edit</button><?php endif; ?>
+                                <button type="button" class="action-btn view-link" onclick="viewVehicleDetails(this)" data-code="<?= htmlspecialchars($vehicle->vehicle_code ?? ($vehicle->plate_number ?? ''), ENT_QUOTES, 'UTF-8') ?>" data-plate="<?= htmlspecialchars($vehicle->plate_number ?? '', ENT_QUOTES, 'UTF-8') ?>" data-type="<?= htmlspecialchars($vehicle->type ?? '', ENT_QUOTES, 'UTF-8') ?>" data-name="<?= htmlspecialchars($vehicle->name ?? '', ENT_QUOTES, 'UTF-8') ?>" data-odometer="<?= (int) ($vehicle->odometer ?? 0) ?>" data-status="<?= htmlspecialchars($vehicle->status ?? '', ENT_QUOTES, 'UTF-8') ?>">View</button>
+                                <button type="button" class="action-btn" onclick="openMaintenanceModal('<?= htmlspecialchars((string) ($vehicle->id ?? ''), ENT_QUOTES, 'UTF-8') ?>', <?= htmlspecialchars(json_encode(($vehicle->vehicle_code ?? $vehicle->plate_number ?? 'Vehicle').' · '.($vehicle->plate_number ?? '')), ENT_QUOTES, 'UTF-8') ?>)">Maintenance<?= !empty($vehicle->maintenanceIssues) && $vehicle->maintenanceIssues->where('status', '!=', 'Resolved')->count() ? ' ('.$vehicle->maintenanceIssues->where('status', '!=', 'Resolved')->count().')' : '' ?></button>
+                                <?php if ($dashboard['isAdmin']): ?><button type="button" class="action-btn edit-link" onclick="editVehicle(this)" data-id="<?= htmlspecialchars((string) ($vehicle->id ?? ''), ENT_QUOTES, 'UTF-8') ?>" data-code="<?= htmlspecialchars($vehicle->vehicle_code ?? ($vehicle->plate_number ?? ''), ENT_QUOTES, 'UTF-8') ?>" data-plate="<?= htmlspecialchars($vehicle->plate_number ?? '', ENT_QUOTES, 'UTF-8') ?>" data-type="<?= htmlspecialchars($vehicle->type ?? '', ENT_QUOTES, 'UTF-8') ?>" data-name="<?= htmlspecialchars($vehicle->name ?? '', ENT_QUOTES, 'UTF-8') ?>" data-odometer="<?= (int) ($vehicle->odometer ?? 0) ?>" data-status="<?= htmlspecialchars($vehicle->status ?? '', ENT_QUOTES, 'UTF-8') ?>">Edit</button><?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
-                    <?php if (count($dashboard['vehicles'] ?? []) === 0): ?><tr><td colspan="6">No vehicles are recorded yet.</td></tr><?php endif; ?>
+                    <?php if (count($dashboard['vehicles'] ?? []) === 0): ?>
+                        <tr><td colspan="6" style="text-align:center;padding:24px;color:#64748b;">
+                            <?= !empty($dashboard['backendUnavailable']) ? '⚠️ Centralized backend is offline. Unable to load vehicle records.' : 'No vehicles are recorded yet.' ?>
+                        </td></tr>
+                    <?php endif; ?>
                 </tbody>
             </table>
         </div>

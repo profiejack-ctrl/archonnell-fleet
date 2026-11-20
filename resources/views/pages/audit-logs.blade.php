@@ -52,10 +52,10 @@
             <tbody>
             <?php if (count($dashboard['auditLogs'])): foreach ($dashboard['auditLogs'] as $entry): ?>
                 <tr>
-                    <td><div class="audit-actor"><span class="audit-avatar"><?= htmlspecialchars(strtoupper(substr($entry['actor'], 0, 2))) ?></span><span><strong><?= htmlspecialchars($entry['actor']) ?></strong><small>Account activity</small></span></div></td>
-                    <td><span class="audit-action"><?= htmlspecialchars($entry['action']) ?></span></td>
-                    <td class="audit-module"><?= htmlspecialchars($entry['module']) ?></td>
-                    <td class="audit-description"><?= htmlspecialchars($entry['description']) ?></td>
+                    <td><div class="audit-actor"><span class="audit-avatar"><?= htmlspecialchars($entry['actor'] ? strtoupper(substr($entry['actor'], 0, 2)) : '—') ?></span><span><strong><?= htmlspecialchars($entry['actor'] ?? '—') ?></strong><small>Account activity</small></span></div></td>
+                    <td><span class="audit-action"><?= htmlspecialchars($entry['action'] ?? '—') ?></span></td>
+                    <td class="audit-module"><?= htmlspecialchars($entry['module'] ?? '—') ?></td>
+                    <td class="audit-description"><?= htmlspecialchars($entry['description'] ?? '—') ?></td>
                     <td class="audit-ip"><?= htmlspecialchars($entry['ip'] ?? '—') ?></td>
                     <td class="audit-date" title="<?= htmlspecialchars($entry['created_at'] ?? '') ?>"><?= htmlspecialchars($entry['relative_time'] ?? '—') ?><small><?= htmlspecialchars($entry['created_at'] ?? '') ?></small></td>
                 </tr>

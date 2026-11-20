@@ -388,8 +388,8 @@
 
 <!-- Embedded JS Logic for Interactive Leaflet Map & API Integration -->
 <script>
-    const apiBasePath = window.FLEETOPS_API_BASE || 'http://localhost:4000/api/v1/fleet';
-    const activeDispatchesUrl = (window.FLEETOPS_API_BASE || 'http://localhost:4000/api/v1/fleet') + '/dispatches/active';
+    const apiBasePath = '/api';
+    const activeDispatchesUrl = '/dispatches/active';
     let map = null;
     let vehicleMarkers = {};
     let activeRoutePolyline = null;
@@ -568,11 +568,11 @@
                     if (activeVehicleId) {
                         const activeV = fleetData.find(v => v.id === activeVehicleId);
                         if (activeV) {
-                            const selectedDispatch = activeDispatches.find(dispatch => Number(dispatch.vehicle_id) === activeVehicleId)
+                            const selectedDispatch = activeDispatches.find(dispatch => String(dispatch.vehicle_id) === String(activeVehicleId) || (dispatch.plate_number && activeV.plate_number && dispatch.plate_number === activeV.plate_number))
                                 || selectedDispatchData;
                             if (selectedDispatch) selectedDispatchData = selectedDispatch;
                             const selectedTripId = selectedDispatch
-                                ? (selectedDispatch.trip_record_id ? Number(selectedDispatch.trip_record_id) : null)
+                                ? (selectedDispatch.trip_record_id || null)
                                 : activeV.active_trip_id;
                             displayVehicleDetails(activeV, false, selectedTripId, selectedDispatch);
                         }
@@ -629,15 +629,15 @@
     }
 
     function selectVehicle(vehicleId, selectedDispatch = null, allowDeselect = false, focusMap = true) {
-        const v = fleetData.find(item => Number(item.id) === Number(vehicleId));
+        const v = fleetData.find(item => String(item.id) === String(vehicleId) || (item.plate_number && vehicleId && String(item.plate_number).toUpperCase() === String(vehicleId).toUpperCase()));
         if (!v) return;
 
         const dispatchSelection = selectedDispatch
-            || activeDispatches.find(dispatch => Number(dispatch.vehicle_id) === Number(vehicleId))
+            || activeDispatches.find(dispatch => String(dispatch.vehicle_id) === String(vehicleId) || (dispatch.plate_number && v.plate_number && dispatch.plate_number === v.plate_number))
             || null;
         const sameDispatchIsAlreadySelected =
             activeVehicleId !== null &&
-            Number(activeVehicleId) === Number(vehicleId) &&
+            String(activeVehicleId) === String(vehicleId) &&
             dispatchSelection &&
             selectedDispatchData &&
             String(dispatchSelection.dispatch_no) === String(selectedDispatchData.dispatch_no);
@@ -650,7 +650,7 @@
 
         selectedDispatchData = dispatchSelection;
         const tripId = dispatchSelection
-            ? (dispatchSelection.trip_record_id ? Number(dispatchSelection.trip_record_id) : null)
+            ? (dispatchSelection.trip_record_id || null)
             : v.active_trip_id;
         activeVehicleId = vehicleId;
         renderActiveDispatches();
@@ -1033,8 +1033,9 @@
         }
 
         visibleDispatches.forEach(dispatch => {
-            const vehicleId = Number(dispatch.vehicle_id);
-            const vehicleIsLoaded = fleetData.some(vehicle => Number(vehicle.id) === vehicleId);
+            const matchedVehicle = fleetData.find(v => (dispatch.vehicle_id && String(v.id) === String(dispatch.vehicle_id)) || (dispatch.plate_number && v.plate_number && v.plate_number.toUpperCase() === dispatch.plate_number.toUpperCase()));
+            const vehicleId = matchedVehicle ? matchedVehicle.id : (dispatch.vehicle_id || dispatch.plate_number);
+            const vehicleIsLoaded = Boolean(matchedVehicle);
             const item = document.createElement('div');
             const isSelectedDispatch = Boolean(
                 selectedDispatchData &&
@@ -1295,7 +1296,7 @@
 
     function recenterMap() {
         const v = fleetData.find(item => String(item.id) === String(followedVehicleId))
-            || (activeVehicleId ? fleetData.find(item => Number(item.id) === Number(activeVehicleId)) : null)
+            || (activeVehicleId ? fleetData.find(item => String(item.id) === String(activeVehicleId)) : null)
             || fleetData.find(hasValidCoordinates);
         if (v && hasValidCoordinates(v)) {
             followedVehicleId = v.id;

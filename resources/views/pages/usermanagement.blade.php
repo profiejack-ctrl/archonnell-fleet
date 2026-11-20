@@ -47,7 +47,7 @@
                             <?php if ($isAdmin): ?>
                                 <td>
                                     <button class="icon-button" title="Edit" type="button"
-                                        onclick="openEditUserModal(<?= (int) $user['id'] ?>, <?= htmlspecialchars(json_encode($user['name']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($user['email']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($user['role']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($user['status']), ENT_QUOTES) ?>)">✏️</button>
+                                        onclick="openEditUserModal('<?= htmlspecialchars((string) $user['id'], ENT_QUOTES) ?>', <?= htmlspecialchars(json_encode($user['name']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($user['email']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($user['role']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($user['status']), ENT_QUOTES) ?>)">✏️</button>
                                     <?php if ($user['id'] !== $dashboard['user']['id']): ?>
                                         <?php $nextStatus = $user['status'] === 'active' ? 'inactive' : 'active'; ?>
                                         <form method="POST" action="<?= route('usermanagement.update', $user['id']) ?>" style="display:inline;" onsubmit="return confirm('Mark <?= htmlspecialchars(addslashes($user['name'])) ?> as <?= $nextStatus ?>?');">

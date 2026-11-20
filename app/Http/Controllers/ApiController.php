@@ -2,6 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\VehicleService;
+use App\Services\DispatchService;
+use App\Services\RouteService;
+use App\Services\NotificationService;
+use App\Services\FleetAnalyticsService;
 use App\Support\Database;
 use App\Support\OpenRouteServiceGeocoder;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +15,31 @@ use PDO;
 
 class ApiController
 {
+    protected function vehicleService(): VehicleService
+    {
+        return app(VehicleService::class);
+    }
+
+    protected function dispatchService(): DispatchService
+    {
+        return app(DispatchService::class);
+    }
+
+    protected function routeService(): RouteService
+    {
+        return app(RouteService::class);
+    }
+
+    protected function notificationService(): NotificationService
+    {
+        return app(NotificationService::class);
+    }
+
+    protected function analyticsService(): FleetAnalyticsService
+    {
+        return app(FleetAnalyticsService::class);
+    }
+
     public function __construct()
     {
         // Uses live fleet tables (vehicles, drivers, trip_records, alerts).
@@ -41,77 +71,24 @@ class ApiController
     public function getLiveVehicles(): void
     {
         $actor = $this->authorizeRole(['Driver', 'Dispatcher', 'Logistics Officer', 'Admin', 'User', 'Staff']);
-        $state = $this->getFleetState();
-        $authorizedVehicleIds = null;
-
-        if ($actor['role'] !== 'Admin') {
-            $driverIds = DB::table('drivers')
-                ->where('user_id', $actor['id'])
-                ->pluck('id');
-            $dispatchVehicleIds = DB::table('dispatches')
-                ->whereIn('driver_id', $driverIds)
-                ->whereRaw('LOWER(TRIM(status)) = ?', ['active'])
-                ->pluck('vehicle_id');
-            $tripVehicleIds = DB::table('trip_records')
-                ->whereIn('driver_id', $driverIds)
-                ->whereRaw('LOWER(TRIM(status)) <> ?', ['completed'])
-                ->pluck('vehicle_id');
-            $authorizedVehicleIds = $dispatchVehicleIds
-                ->merge($tripVehicleIds)
-                ->mapWithKeys(fn ($vehicleId) => [(int) $vehicleId => true])
-                ->all();
+        $service = $this->vehicleService();
+        if (!$service->getClient()->isAvailable()) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => 'Centralized backend is unavailable.',
+                'vehicles' => [],
+            ], 503);
+            return;
         }
 
-        $vehicles = [];
-        foreach ($state['vehicles'] as $v) {
-            if ($authorizedVehicleIds !== null && !isset($authorizedVehicleIds[$v['id']])) {
-                continue;
-            }
-
-            $trip = $this->findActiveTripForVehicle($state, $v['id']);
-            $loc = $state['locations'][$v['id']] ?? null;
-
-            // Only expose recent GPS positions as live markers. A stopped tracker must
-            // not leave its last position displayed indefinitely.
-            if ($loc !== null) {
-                $locationTimestamp = strtotime((string)($loc['timestamp'] ?? ''));
-                if ($locationTimestamp === false || $locationTimestamp < (time() - 20)) {
-                    $loc = null;
-                }
-            }
-            if ($loc === null) {
-                $loc = ['latitude' => null, 'longitude' => null, 'speed' => 0.0, 'heading' => null, 'timestamp' => null];
-            }
-
-            $driver = null;
-            if ($trip) {
-                $driver = $state['drivers'][$trip['driver_id']] ?? null;
-            }
-            if ($driver === null && !empty($state['drivers'])) {
-                $driver = $state['drivers'][$v['id']] ?? reset($state['drivers']);
-            }
-
-            $vehicles[] = [
-                'id' => $v['id'],
-                'vehicle_code' => $v['vehicle_code'],
-                'plate_number' => $v['plate_number'],
-                'type' => $v['type'],
-                'status' => $v['status'],
-                'fuel_level' => (float)$v['fuel_level'],
-                'driver_name' => $driver['name'] ?? 'Unassigned',
-                'employee_id' => $driver['employee_id'] ?? '',
-                'latitude' => $loc['latitude'] !== null ? (float)$loc['latitude'] : null,
-                'longitude' => $loc['longitude'] !== null ? (float)$loc['longitude'] : null,
-                'speed' => (float)($loc['speed'] ?? 0),
-                'heading' => isset($loc['heading']) && $loc['heading'] !== null ? (float)$loc['heading'] : null,
-                'last_update' => $loc['timestamp'],
-                'active_trip_id' => $trip ? $trip['id'] : null,
-                'origin' => $trip ? $trip['origin'] : 'Depot Central',
-                'destination' => $trip ? $trip['destination'] : 'Standby',
-                'trip_status' => $trip ? $trip['status'] : 'Idle',
-                'route_color' => $trip ? $this->calculateRouteColor($trip, $loc['speed']) : 'green',
-                'trip_start_time' => $trip ? $trip['departure_time'] : null,
-            ];
+        $vehicles = $service->getLiveVehiclesTelemetry();
+        if ($vehicles === null) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => $service->getClient()->getLastError() ?? 'Failed to retrieve live vehicles telemetry from centralized backend.',
+                'vehicles' => [],
+            ], $service->getClient()->getLastStatusCode() ?: 500);
+            return;
         }
 
         $this->jsonResponse([
@@ -119,6 +96,7 @@ class ApiController
             'timestamp' => date('Y-m-d H:i:s'),
             'vehicles' => $vehicles,
         ]);
+        return;
     }
 
     /**
@@ -127,37 +105,34 @@ class ApiController
     public function getActiveTrips(): void
     {
         $this->authorizeRole(['Driver', 'Dispatcher', 'Logistics Officer', 'Admin', 'User']);
-        $state = $this->getFleetState();
+        $service = $this->dispatchService();
+        if (!$service->getClient()->isAvailable()) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => 'Centralized backend is unavailable.',
+                'count' => 0,
+                'trips' => [],
+            ], 503);
+            return;
+        }
 
-        $activeTrips = [];
-        foreach ($state['trips'] as $t) {
-            if ($t['status'] === 'Completed') continue;
-
-            $v = $state['vehicles'][$t['vehicle_id']] ?? null;
-            $d = $state['drivers'][$t['driver_id']] ?? null;
-            $loc = $state['locations'][$t['vehicle_id']] ?? null;
-
-            $speed = $loc ? (float)$loc['speed'] : 40.0;
-            $routeColor = $this->calculateRouteColor($t, $speed);
-            $eta = $this->computeEtaDetails($t, $loc);
-
-            $activeTrips[] = array_merge($t, [
-                'vehicle_code' => $v ? $v['vehicle_code'] : 'TRK-000',
-                'plate_number' => $v ? $v['plate_number'] : 'N/A',
-                'driver_name' => $d ? $d['name'] : 'Unassigned',
-                'current_lat' => $loc ? (float)$loc['latitude'] : (float)$t['origin_lat'],
-                'current_lng' => $loc ? (float)$loc['longitude'] : (float)$t['origin_lng'],
-                'current_speed' => $speed,
-                'route_color' => $routeColor,
-                'eta' => $eta,
-            ]);
+        $trips = $service->getActiveDispatches();
+        if ($trips === null) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => $service->getClient()->getLastError() ?? 'Failed to retrieve active trips from centralized backend.',
+                'count' => 0,
+                'trips' => [],
+            ], $service->getClient()->getLastStatusCode() ?: 500);
+            return;
         }
 
         $this->jsonResponse([
             'success' => true,
-            'count' => count($activeTrips),
-            'trips' => $activeTrips,
+            'count' => count($trips),
+            'trips' => $trips,
         ]);
+        return;
     }
 
     /**
@@ -166,136 +141,26 @@ class ApiController
     public function getTripRoute(int $tripId): void
     {
         $actor = $this->authorizeRole(['Driver', 'Dispatcher', 'Logistics Officer', 'Admin', 'User', 'Staff']);
-        $state = $this->getFleetState();
-
-        $trip = null;
-        foreach ($state['trips'] as $t) {
-            if ((int)$t['id'] === $tripId) {
-                $trip = $t;
-                break;
-            }
-        }
-
-        if (!$trip) {
-            $this->jsonResponse(['success' => false, 'error' => 'Trip not found'], 404);
-            return;
-        }
-        if (!$this->actorCanAccessTrip($trip, $actor)) {
-            $this->jsonResponse(['success' => false, 'error' => 'Trip not found'], 404);
-            return;
-        }
-
-        $v = $state['vehicles'][$trip['vehicle_id']] ?? null;
-        $d = $state['drivers'][$trip['driver_id']] ?? null;
-        $loc = $state['locations'][$trip['vehicle_id']] ?? null;
-
-        // Geocode missing origin/destination coordinates and persist them.
-        $coords = $this->ensureTripCoordinates($trip);
-        if ($coords === null) {
+        $service = $this->routeService();
+        if (!$service->getClient()->isAvailable()) {
             $this->jsonResponse([
                 'success' => false,
-                'error' => 'Unable to geocode the trip origin or destination. Check the application log for the failed location.',
-            ], 400);
+                'error' => 'Centralized backend is unavailable.',
+            ], 503);
             return;
         }
-        $trip = array_merge($trip, $coords);
 
-        if ($loc === null) {
-            $loc = [
-                'latitude' => (float)$trip['origin_lat'],
-                'longitude' => (float)$trip['origin_lng'],
-                'speed' => 0.0,
-                'fuel_level' => (float)($v['fuel_level'] ?? 0),
-            ];
-        }
-
-        // Keep route geometry independent of live GPS; ETA is loaded separately.
-        $routeColor = $this->calculateRouteColor($trip, (float)$loc['speed']);
-        $originLocation = [
-            'latitude' => (float)$trip['origin_lat'],
-            'longitude' => (float)$trip['origin_lng'],
-            'speed' => 0.0,
-        ];
-        $waypoints = [];
-        $alternativeRoutes = [];
-        $dispatchRouteResponse = null;
-        try {
-            // Prefer TomTom's live-traffic routing for the selectable route options.
-            $dispatchRouteResponse = $this->requestTomTomRoutesForTrip($trip, null);
-        } catch (\Throwable $exception) {
-            Log::warning('TomTom route options failed; falling back to OpenRouteService.', [
-                'trip_record_id' => $trip['id'],
-                'exception' => $exception->getMessage(),
-            ]);
-        }
-
-        if ($dispatchRouteResponse === null) {
-            try {
-                $dispatchRouteResponse = $this->requestOpenRouteServiceRouteForTrip($trip, null);
-            } catch (\Throwable $exception) {
-                Log::warning('Unable to generate TripRecord A-to-B route.', [
-                    'trip_record_id' => $trip['id'],
-                    'exception' => $exception->getMessage(),
-                ]);
-            }
-        }
-
-        if (is_array($dispatchRouteResponse)) {
-            try {
-                $waypoints = $this->generateRouteWaypoints($trip, $originLocation, $dispatchRouteResponse);
-                $alternativeRoutes = $this->buildAlternativeRoutes(
-                    $dispatchRouteResponse,
-                    $trip,
-                    $originLocation,
-                    $waypoints
-                );
-            } catch (\Throwable $exception) {
-                Log::warning('Unable to process TripRecord route geometry.', [
-                    'trip_record_id' => $trip['id'],
-                    'exception' => $exception->getMessage(),
-                ]);
-            }
-        }
-
-        $trafficDelays = [];
-        if ($routeColor === 'yellow') {
-            $trafficDelays[] = [
-                'segment' => 'C-5 Corridor / Pasig Express Road',
-                'delay_minutes' => 14,
-                'severity' => 'Moderate Traffic',
-            ];
-        } elseif ($routeColor === 'red') {
-            $trafficDelays[] = [
-                'segment' => 'EDSA Guadalupe / Bridge Bottleneck',
-                'delay_minutes' => 28,
-                'severity' => 'Heavy Congestion / Incident',
-            ];
+        $centralRoute = $service->getTripRoute((string)$tripId);
+        if ($centralRoute) {
+            $this->jsonResponse($centralRoute);
+            return;
         }
 
         $this->jsonResponse([
-            'success' => true,
-            'trip' => [
-                'id' => $trip['id'],
-                'vehicle_id' => $trip['vehicle_id'],
-                'vehicle_code' => $v ? $v['vehicle_code'] : 'TRK-000',
-                'plate_number' => $v ? $v['plate_number'] : 'N/A',
-                'driver_name' => $d ? $d['name'] : 'Driver',
-                'origin' => $trip['origin'],
-                'destination' => $trip['destination'],
-                'origin_coords' => [(float)$trip['origin_lat'], (float)$trip['origin_lng']],
-                'dest_coords' => [(float)$trip['dest_lat'], (float)$trip['dest_lng']],
-                'current_coords' => [(float)$loc['latitude'], (float)$loc['longitude']],
-                'current_speed' => (float)$loc['speed'],
-                'fuel_level' => (float)($loc['fuel_level'] ?? ($v['fuel_level'] ?? 80)),
-                'departure_time' => $trip['departure_time'],
-                'status' => $trip['status'],
-                'route_color' => $routeColor, // green, yellow, red
-                'waypoints' => $waypoints,
-                'routes' => $alternativeRoutes,
-                'traffic_delays' => $trafficDelays,
-                'eta' => null,
-            ],
-        ]);
+            'success' => false,
+            'error' => $service->getClient()->getLastError() ?? 'Failed to retrieve trip route from centralized backend.',
+        ], $service->getClient()->getLastStatusCode() ?: 404);
+        return;
     }
 
     /**
@@ -304,39 +169,26 @@ class ApiController
     public function getTripEta(int $tripId): void
     {
         $actor = $this->authorizeRole(['Driver', 'Dispatcher', 'Logistics Officer', 'Admin', 'User', 'Staff']);
-        $state = $this->getFleetState();
-
-        $trip = null;
-        foreach ($state['trips'] as $t) {
-            if ((int)$t['id'] === $tripId) {
-                $trip = $t;
-                break;
-            }
-        }
-
-        if (!$trip) {
-            $this->jsonResponse(['success' => false, 'error' => 'Trip not found'], 404);
-            return;
-        }
-        if (!$this->actorCanAccessTrip($trip, $actor)) {
-            $this->jsonResponse(['success' => false, 'error' => 'Trip not found'], 404);
+        $service = $this->routeService();
+        if (!$service->getClient()->isAvailable()) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => 'Centralized backend is unavailable.',
+            ], 503);
             return;
         }
 
-        $loc = $state['locations'][$trip['vehicle_id']] ?? null;
-        $coords = $this->ensureTripCoordinates($trip);
-        if ($coords === null) {
-            $this->jsonResponse(['success' => false, 'error' => 'Unable to derive trip origin/destination coordinates.'], 400);
+        $centralEta = $service->getTripEta((string)$tripId);
+        if ($centralEta) {
+            $this->jsonResponse($centralEta);
             return;
         }
-        $trip = array_merge($trip, $coords);
-        $eta = $this->computeEtaDetails($trip, $loc);
 
         $this->jsonResponse([
-            'success' => true,
-            'trip_id' => $tripId,
-            'eta' => $eta,
-        ]);
+            'success' => false,
+            'error' => $service->getClient()->getLastError() ?? 'Failed to retrieve trip ETA from centralized backend.',
+        ], $service->getClient()->getLastStatusCode() ?: 404);
+        return;
     }
 
     /**
@@ -349,535 +201,130 @@ class ApiController
         $raw = file_get_contents('php://input');
         $data = json_decode($raw, true) ?: $_POST;
 
-        $vehicleId = (int)($data['vehicle_id'] ?? 0);
-        $origin = $data['origin'] ?? null;
-        $destination = $data['destination'] ?? null;
-        $originLat = isset($data['origin_lat']) ? (float)$data['origin_lat'] : null;
-        $originLng = isset($data['origin_lng']) ? (float)$data['origin_lng'] : null;
-        $destLat = isset($data['dest_lat']) ? (float)$data['dest_lat'] : null;
-        $destLng = isset($data['dest_lng']) ? (float)$data['dest_lng'] : null;
-        $driverId = isset($data['driver_id']) ? (int)$data['driver_id'] : 0;
-
-        $driverBoundActor = in_array($actor['role'], ['Driver', 'User'], true);
-        if ($driverBoundActor) {
-            $accountDriverId = (int)DB::table('drivers')->where('user_id', $actor['id'])->value('id');
-            if (!$accountDriverId || ($driverId && $driverId !== $accountDriverId)) {
-                $this->jsonResponse(['success' => false, 'error' => 'Driver account does not match the requested trip.'], 403);
-                return;
-            }
-            $driverId = $accountDriverId;
-        }
-
-        $vehicle = $vehicleId ? DB::table('vehicles')->where('id', $vehicleId)->first() : null;
-        if (!$vehicle) {
-            $this->jsonResponse(['success' => false, 'error' => 'Vehicle not found.'], 404);
-            return;
-        }
-        if (!$driverId) {
-            $latestTrip = DB::table('trip_records')->where('vehicle_id', $vehicleId)->orderByDesc('id')->first();
-            $driverId = $latestTrip->driver_id ?? 0;
-        }
-        $driver = $driverId ? DB::table('drivers')->where('id', $driverId)->first() : null;
-        if (!$driver) {
-            $this->jsonResponse(['success' => false, 'error' => 'Driver not found for this vehicle.'], 422);
-            return;
-        }
-
-        $activeDispatch = DB::table('dispatches')
-            ->where('vehicle_id', $vehicleId)
-            ->whereRaw('LOWER(TRIM(status)) = ?', ['active'])
-            ->orderByDesc('id')
-            ->first();
-        $existingVehicleTrip = DB::table('trip_records')
-            ->where('vehicle_id', $vehicleId)
-            ->whereRaw('LOWER(TRIM(status)) <> ?', ['completed'])
-            ->orderByDesc('id')
-            ->first();
-        if ($driverBoundActor && $activeDispatch && (int)$activeDispatch->driver_id !== $driverId) {
-            $this->jsonResponse(['success' => false, 'error' => 'Vehicle is assigned to a different driver.'], 403);
-            return;
-        }
-        if ($actor['role'] === 'User' && $existingVehicleTrip && (int)$existingVehicleTrip->driver_id !== $driverId) {
-            $this->jsonResponse(['success' => false, 'error' => 'Vehicle is assigned to a different driver.'], 403);
-            return;
-        }
-
-        $ownsActiveDispatch = $activeDispatch && (int)$activeDispatch->driver_id === $driverId;
-        $ownsExistingTrip = $existingVehicleTrip && (int)$existingVehicleTrip->driver_id === $driverId;
-        if ($actor['role'] === 'User' && !$ownsActiveDispatch && !$ownsExistingTrip) {
-            $this->jsonResponse(['success' => false, 'error' => 'No active dispatch or trip is assigned to this driver account.'], 403);
-            return;
-        }
-
-        $dispatchId = $ownsActiveDispatch
-            ? (int)$activeDispatch->id
-            : null;
-        $existingTrip = null;
-        if ($dispatchId !== null) {
-            $existingTrip = DB::table('trip_records')
-                ->where('dispatch_id', $dispatchId)
-                ->whereRaw('LOWER(TRIM(status)) <> ?', ['completed'])
-                ->orderByDesc('id')
-                ->first();
-        }
-        if ($actor['role'] === 'User' && !$existingTrip && $ownsExistingTrip) {
-            $existingTrip = $existingVehicleTrip;
-        }
-        if ($existingTrip) {
+        $service = $this->routeService();
+        if (!$service->getClient()->isAvailable()) {
             $this->jsonResponse([
-                'success' => true,
-                'message' => 'Tracking continued for the active dispatch or trip.',
-                'trip' => (array)$existingTrip,
-                'tracking_interval_seconds' => 5,
-            ]);
+                'success' => false,
+                'error' => 'Centralized backend is unavailable. Trip cannot be started.',
+            ], 503);
             return;
         }
 
-        if (!$origin || !$destination) {
-            $this->jsonResponse(['success' => false, 'error' => 'Origin and destination are required.'], 422);
+        $centralRes = $service->startTrip($data);
+        if ($centralRes) {
+            $this->jsonResponse($centralRes);
             return;
         }
-
-        // Geocode free-text addresses when the client did not provide coordinates.
-        if ($originLat === null || $originLng === null) {
-            $geo = $this->geocodeAddress((string)$origin);
-            $originLat = $geo['lat'] ?? null;
-            $originLng = $geo['lng'] ?? null;
-        }
-        if ($destLat === null || $destLng === null) {
-            $geo = $this->geocodeAddress((string)$destination);
-            $destLat = $geo['lat'] ?? null;
-            $destLng = $geo['lng'] ?? null;
-        }
-
-      if ($originLat === null || $originLng === null || $destLat === null || $destLng === null) {
-    $this->jsonResponse([
-        'success' => false,
-        'error' => 'Unable to determine coordinates for the trip origin or destination. Please check the addresses and try again.',
-    ], 422);
-    return;
-}
-
-        $now = date('Y-m-d H:i:s');
-
-        $tripId = DB::transaction(function () use ($vehicleId, $driverId, $dispatchId, $origin, $destination, $originLat, $originLng, $destLat, $destLng, $now, $vehicle) {
-            DB::table('vehicles')->where('id', $vehicleId)->update(['status' => 'Active', 'updated_at' => $now]);
-
-            DB::table('location_logs')->insert([
-                'vehicle_id' => $vehicleId,
-                'latitude' => $originLat ?? 0,
-                'longitude' => $originLng ?? 0,
-                'speed' => 0.0,
-                'timestamp' => $now,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            // Close any old active trip for this vehicle.
-            DB::table('trip_records')
-                ->where('vehicle_id', $vehicleId)
-                ->where('status', '!=', 'Completed')
-                ->update(['status' => 'Completed', 'actual_arrival' => $now, 'updated_at' => $now]);
-
-            $tripId = DB::table('trip_records')->insertGetId([
-                'dispatch_id' => $dispatchId,
-                'vehicle_id' => $vehicleId,
-                'driver_id' => $driverId,
-                'origin' => $origin,
-                'destination' => $destination,
-                'origin_lat' => $originLat,
-                'origin_lng' => $originLng,
-                'dest_lat' => $destLat,
-                'dest_lng' => $destLng,
-                'departure_time' => $now,
-                'estimated_arrival' => null,
-                'actual_arrival' => null,
-                'total_distance' => ($originLat !== null && $destLat !== null)
-                    ? round($this->haversineDistance((float)$originLat, (float)$originLng, (float)$destLat, (float)$destLng), 2)
-                    : 0,
-                'total_duration' => 0,
-                'fuel_consumption' => 0,
-                'status' => 'Active',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            DB::table('alerts')->insert([
-                'vehicle_id' => $vehicleId,
-                'trip_record_id' => $tripId,
-                'type' => 'Trip started',
-                'title' => 'Trip started',
-                'message' => "Driver started a trip for Vehicle #{$vehicle->vehicle_code} heading to {$destination}.",
-                'detail' => "Driver started a trip for Vehicle #{$vehicle->vehicle_code} heading to {$destination}.",
-                'icon' => '🚚',
-                'severity' => 'info',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            return $tripId;
-        });
-
-        $trip = DB::table('trip_records')->where('id', $tripId)->first();
 
         $this->jsonResponse([
-            'success' => true,
-            'message' => "Trip started successfully for Vehicle #{$vehicle->vehicle_code}.",
-            'trip' => (array) $trip,
-            'tracking_interval_seconds' => 5,
-        ]);
+            'success' => false,
+            'error' => $service->getClient()->getLastError() ?? 'Failed to start trip on centralized backend.',
+        ], $service->getClient()->getLastStatusCode() ?: 400);
+        return;
     }
 
     /**
      * POST /api/location/update
      */
     public function updateLocation(): void
-
     {
         $actor = $this->authorizeRole(['Driver', 'User', 'Dispatcher', 'Admin']);
         $raw = file_get_contents('php://input');
         $data = json_decode($raw, true) ?: $_POST;
 
-        $vehicleId = (int)($data['vehicle_id'] ?? 0);
-        $latitude = isset($data['latitude']) ? (float)$data['latitude'] : null;
-        $longitude = isset($data['longitude']) ? (float)$data['longitude'] : null;
-        $speed = isset($data['speed']) ? (float)$data['speed'] : 0.0;
-        $heading = isset($data['heading']) && is_numeric($data['heading']) ? (float)$data['heading'] : null;
-        if ($heading !== null) {
-            $heading = (($heading % 360) + 360) % 360;
-        }
-        $fuelLevel = isset($data['fuel_level']) ? (float)$data['fuel_level'] : null;
-        $vehicle = $vehicleId ? DB::table('vehicles')->where('id', $vehicleId)->first() : null;
-
-        if (!$vehicle || $latitude === null || $longitude === null) {
-            $this->jsonResponse(['success' => false, 'error' => 'Vehicle and coordinates are required.'], 422);
+        $service = $this->routeService();
+        if (!$service->getClient()->isAvailable()) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => 'Centralized backend is unavailable. Location cannot be updated.',
+            ], 503);
             return;
         }
 
-        $tripModel = DB::table('trip_records')
-            ->where('vehicle_id', $vehicleId)
-            ->whereRaw('LOWER(TRIM(status)) <> ?', ['completed'])
-            ->orderByDesc('id')
-            ->first();
-
-        $activeDispatch = DB::table('dispatches')
-            ->where('vehicle_id', $vehicleId)
-            ->whereRaw('LOWER(TRIM(status)) = ?', ['active'])
-            ->orderByDesc('id')
-            ->first();
-
-        if (in_array($actor['role'], ['Driver', 'User'], true)) {
-            $accountDriverId = (int) DB::table('drivers')
-                ->where('user_id', $actor['id'])
-                ->value('id');
-
-            $ownsTrip = $tripModel
-                && (int) $tripModel->driver_id === $accountDriverId;
-
-            $ownsDispatch = $activeDispatch
-                && (int) $activeDispatch->driver_id === $accountDriverId;
-
-            if (
-                !$accountDriverId ||
-                (!$ownsTrip && !$ownsDispatch) ||
-                ($tripModel && !$ownsTrip) ||
-                ($activeDispatch && !$ownsDispatch)
-            ) {
-                $this->jsonResponse([
-                    'success' => false,
-                    'error' => 'Vehicle is not assigned to this driver account.',
-                ], 403);
-                return;
-            }
+        $centralRes = $service->updateLocation($data);
+        if ($centralRes) {
+            $this->jsonResponse($centralRes);
+            return;
         }
 
-        $now = date('Y-m-d H:i:s');
-
-        $locRecord = [
-            'latitude' => $latitude,
-            'longitude' => $longitude,
-            'speed' => $speed,
-            'heading' => $heading,
-            'timestamp' => $now,
-        ];
-        if ($fuelLevel !== null) {
-            $locRecord['fuel_level'] = $fuelLevel;
-        }
-
-        DB::table('location_logs')->insert([
-            'vehicle_id' => $vehicleId,
-            'latitude' => $latitude,
-            'longitude' => $longitude,
-            'speed' => $speed,
-            'heading' => $heading,
-            'fuel_level' => $fuelLevel,
-            'timestamp' => $now,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
-
-        if ($fuelLevel !== null) {
-            DB::table('vehicles')->where('id', $vehicleId)->update(['fuel_level' => $fuelLevel, 'updated_at' => $now]);
-        }
-
-        $trip = $tripModel ? (array) $tripModel : null;
-        $notificationsCreated = [];
-        $arrivalDetected = false;
-
-        $addAlert = function (string $type, string $message, string $severity) use ($vehicleId, $trip, $vehicle, $now, &$notificationsCreated) {
-            // Route deviation is a state alert: only create it once per trip to avoid
-            // filling the dashboard with the same warning on every GPS update.
-            if ($type === 'Route deviation' && !empty($trip['id'])) {
-                $alreadyLogged = DB::table('alerts')
-                    ->where('trip_record_id', $trip['id'])
-                    ->where('title', 'Route deviation')
-                    ->exists();
-
-                if ($alreadyLogged) {
-                    return;
-                }
-            }
-
-            $alertId = DB::table('alerts')->insertGetId([
-                'vehicle_id' => $vehicleId,
-                'trip_record_id' => $trip['id'] ?? null,
-                'type' => $type,
-                'title' => $type,
-                'message' => $message,
-                'detail' => $message,
-                'icon' => $severity === 'warning' ? '⚠️' : 'ℹ️',
-                'severity' => $severity,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-            $notificationsCreated[] = [
-                'id' => $alertId,
-                'trip_id' => $trip['id'] ?? null,
-                'vehicle_id' => $vehicleId,
-                'type' => $type,
-                'message' => $message,
-                'severity' => $severity,
-                'created_at' => $now,
-            ];
-        };
-
-        if ($trip) {
-            $tripId = $trip['id'];
-
-            // Ensure destination coordinates exist so arrival monitoring works.
-            $trip = array_merge($trip, $this->ensureTripCoordinates($trip) ?? []);
-            $destLat = $trip['dest_lat'] !== null ? (float)$trip['dest_lat'] : null;
-            $destLng = $trip['dest_lng'] !== null ? (float)$trip['dest_lng'] : null;
-
-            if ($destLat !== null && $destLng !== null) {
-                // 1. Calculate distance to destination in kilometers
-                $distToDestKm = $this->haversineDistance($latitude, $longitude, $destLat, $destLng);
-
-                // 2. Arrival Monitoring: detect if reached destination (< 50 meters = 0.05 km)
-                if ($distToDestKm <= 0.05 && $trip['status'] !== 'Completed') {
-                    $arrivalDetected = true;
-
-                    $startTime = $trip['departure_time'] ? strtotime((string)$trip['departure_time']) : time();
-                    $durationMins = max(1, (int)round((time() - $startTime) / 60));
-                    $totalDist = (float)($trip['total_distance'] ?: round($this->haversineDistance((float)$trip['origin_lat'], (float)$trip['origin_lng'], $destLat, $destLng), 2));
-                    $fuelUsed = round($totalDist * 0.28, 2); // Average 0.28 L / km for heavy cargo truck
-
-                    DB::table('trip_records')->where('id', $tripId)->update([
-                        'status' => 'Completed',
-                        'actual_arrival' => $now,
-                        'total_distance' => $totalDist,
-                        'total_duration' => $durationMins,
-                        'fuel_consumption' => $fuelUsed,
-                        'updated_at' => $now,
-                    ]);
-
-                    // Complete the dispatch linked to this trip, if any.
-                    if (!empty($trip['dispatch_id'])) {
-                        DB::table('dispatches')->where('id', $trip['dispatch_id'])->update(['status' => 'Completed', 'updated_at' => $now]);
-                    }
-
-                    DB::table('vehicles')->where('id', $vehicleId)->update(['status' => 'Active', 'updated_at' => $now]);
-
-                    $addAlert('Vehicle arrived', "Vehicle #{$vehicle->vehicle_code} has arrived safely at {$trip['destination']}.", 'info');
-                } else {
-                    // Check Route Deviation (> 3 KM off straight path)
-                    if ($trip['origin_lat'] !== null && $trip['origin_lng'] !== null) {
-                        $originDist = $this->haversineDistance((float)$trip['origin_lat'], (float)$trip['origin_lng'], $latitude, $longitude);
-                        $directDist = $this->haversineDistance((float)$trip['origin_lat'], (float)$trip['origin_lng'], $destLat, $destLng);
-                        if ($originDist > ($directDist + 3.0)) {
-                            $addAlert('Route deviation', "Route deviation detected for Vehicle #{$vehicle->vehicle_code} on trip to {$trip['destination']}.", 'warning');
-                        }
-                    }
-
-                }
-            } else {
-            }
-        }
-
-        $this->jsonResponse([
-            'success' => true,
-            'message' => 'Location updated successfully',
-            'arrival_monitoring' => [
-                'arrival_detected' => $arrivalDetected,
-                'trip_status' => $trip ? ($arrivalDetected ? 'Completed' : $trip['status']) : 'No active trip',
-            ],
-            'location' => $locRecord,
-            'new_notifications' => $notificationsCreated,
-        ]);
-    }
-
-
-
-public function completeMyDispatch(int $dispatchId): void
-{
-    $actor = $this->authorizeRole(['Driver', 'User']);
-
-    $driverId = (int) DB::table('drivers')
-        ->where('user_id', $actor['id'])
-        ->value('id');
-
-    if (!$driverId) {
         $this->jsonResponse([
             'success' => false,
-            'error' => 'No driver profile is linked to this account.',
-        ], 403);
+            'error' => $service->getClient()->getLastError() ?? 'Failed to update location on centralized backend.',
+        ], $service->getClient()->getLastStatusCode() ?: 400);
         return;
     }
 
-    $dispatch = DB::table('dispatches')
-        ->where('id', $dispatchId)
-        ->where('driver_id', $driverId)
-        ->whereRaw('LOWER(TRIM(status)) = ?', ['active'])
-        ->first();
+    public function completeMyDispatch(int $dispatchId): void
+    {
+        $actor = $this->authorizeRole(['Driver', 'User']);
 
-    if (!$dispatch) {
-        $this->jsonResponse([
-            'success' => false,
-            'error' => 'Active dispatch not found for this driver.',
-        ], 404);
-        return;
-    }
+        $dispatchService = $this->dispatchService();
+        if (!$dispatchService->getClient()->isAvailable()) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => 'Centralized backend is unavailable. Dispatch cannot be completed.',
+            ], 503);
+            return;
+        }
 
-    $now = now();
+        $centralRes = $dispatchService->completeDispatch((string)$dispatchId);
+        if (!$centralRes && !$dispatchService->getClient()->wasSuccessful()) {
+            $centralRes = $dispatchService->updateDispatchStatus((string)$dispatchId, 'Completed');
+        }
 
-    DB::transaction(function () use ($dispatch, $now) {
+        if (!$centralRes && !$dispatchService->getClient()->wasSuccessful()) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => $dispatchService->getClient()->getLastError() ?? 'Failed to complete dispatch on centralized backend.',
+            ], $dispatchService->getClient()->getLastStatusCode() ?: 400);
+            return;
+        }
+
+        $now = now();
         DB::table('dispatches')
-            ->where('id', $dispatch->id)
-            ->whereRaw('LOWER(TRIM(status)) = ?', ['active'])
+            ->where('id', $dispatchId)
             ->update([
                 'status' => 'Completed',
                 'updated_at' => $now,
             ]);
 
-        $trip = DB::table('trip_records')
-            ->where('dispatch_id', $dispatch->id)
-            ->whereRaw('LOWER(TRIM(status)) <> ?', ['completed'])
-            ->orderByDesc('id')
-            ->first();
-
-        if ($trip) {
-            $duration = $trip->departure_time
-                ? max(0, (int) $now->diffInMinutes(\Illuminate\Support\Carbon::parse($trip->departure_time)))
-                : 0;
-
-            DB::table('trip_records')
-                ->where('id', $trip->id)
-                ->update([
-                    'status' => 'Completed',
-                    'actual_arrival' => $now,
-                    'total_duration' => $duration,
-                    'updated_at' => $now,
-                ]);
-        }
-
-        DB::table('vehicles')
-            ->where('id', $dispatch->vehicle_id)
-            ->update([
-                'status' => 'Active',
-                'updated_at' => $now,
-            ]);
-    });
-
-    $this->jsonResponse([
-        'success' => true,
-        'message' => 'Delivery marked as completed.',
-        'dispatch_id' => (int) $dispatch->id,
-        'status' => 'Completed',
-    ]);
-}
-
-public function getMyActiveDispatches(): void
-{
-    $actor = $this->authorizeRole(['Driver', 'User']);
-
-    $driverId = (int) DB::table('drivers')
-        ->where('user_id', $actor['id'])
-        ->value('id');
-
-    if (!$driverId) {
         $this->jsonResponse([
-            'success' => false,
-            'error' => 'No driver profile is linked to this account.',
-        ], 403);
-        return;
+            'success' => true,
+            'message' => 'Delivery marked as completed.',
+            'dispatch_id' => $dispatchId,
+            'status' => 'Completed',
+        ]);
     }
 
-    $dispatches = DB::table('dispatches')
-        ->join(
-            'vehicles',
-            'dispatches.vehicle_id',
-            '=',
-            'vehicles.id'
-        )
-        ->where('dispatches.driver_id', $driverId)
-        ->whereRaw(
-            'LOWER(TRIM(dispatches.status)) = ?',
-            ['active']
-        )
-        ->select([
-            'dispatches.id',
-            'dispatches.dispatch_no',
-            'dispatches.vehicle_id',
-            'dispatches.origin',
-            'dispatches.destination',
-            'dispatches.origin_lat',
-            'dispatches.origin_lng',
-            'dispatches.dest_lat',
-            'dispatches.dest_lng',
-            'dispatches.status',
-            'vehicles.vehicle_code',
-            'vehicles.plate_number',
-        ])
-        ->orderByDesc('dispatches.id')
-        ->get()
-        ->map(function ($dispatch) {
-            $location = DB::table('location_logs')
-                ->where('vehicle_id', $dispatch->vehicle_id)
-                ->orderByDesc('timestamp')
-                ->first([
-                    'latitude',
-                    'longitude',
-                    'speed',
-                    'timestamp',
-                ]);
+    public function getMyActiveDispatches(): void
+    {
+        $actor = $this->authorizeRole(['Driver', 'User']);
 
-            $dispatch->current_latitude =
-                $location?->latitude;
-            $dispatch->current_longitude =
-                $location?->longitude;
-            $dispatch->current_speed =
-                $location?->speed;
-            $dispatch->location_updated_at =
-                $location?->timestamp;
+        $dispatchService = $this->dispatchService();
+        if (!$dispatchService->getClient()->isAvailable()) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => 'Centralized backend is unavailable.',
+                'dispatches' => [],
+            ], 503);
+            return;
+        }
 
-            return $dispatch;
-        });
+        $centralDispatches = $dispatchService->getActiveDispatches();
+        if ($centralDispatches === null) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => $dispatchService->getClient()->getLastError() ?? 'Failed to retrieve active dispatches from centralized backend.',
+                'dispatches' => [],
+            ], $dispatchService->getClient()->getLastStatusCode() ?: 500);
+            return;
+        }
 
-    $this->jsonResponse([
-        'success' => true,
-        'dispatches' => $dispatches,
-    ]);
-}
+        $this->jsonResponse([
+            'success' => true,
+            'dispatches' => $centralDispatches,
+        ]);
+    }
 
     /**
      * GET /api/analytics/dashboard
@@ -886,50 +333,29 @@ public function getMyActiveDispatches(): void
     {
         $this->authorizeRole(['Driver', 'Dispatcher', 'Logistics Officer', 'Admin', 'User']);
 
-        $today = date('Y-m-d');
-        $activeTrips = 0;
-        $completedTrips = 0;
-        $delayedTrips = 0;
-        $totalDist = 0.0;
-        $totalFuel = 0.0;
+        $service = $this->analyticsService();
+        if (!$service->getClient()->isAvailable()) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => 'Centralized backend is unavailable.',
+            ], 503);
+            return;
+        }
 
-        $trips = DB::table('trip_records')->get();
-        foreach ($trips as $t) {
-            if (in_array(strtolower((string)$t->status), ['completed'], true)) {
-                $completedTrips++;
-                $completedDate = $t->actual_arrival ? substr((string)$t->actual_arrival, 0, 10) : null;
-                if ($completedDate === $today) {
-                    $totalDist += (float)($t->total_distance ?? 0);
-                    $totalFuel += (float)($t->fuel_consumption ?? 0);
-                }
-            } elseif (strtolower((string)$t->status) === 'delayed' || strtolower((string)$t->status) === 'critical delay') {
-                $activeTrips++;
-                $delayedTrips++;
-            } else {
-                $activeTrips++;
-                $loc = DB::table('location_logs')
-                    ->where('vehicle_id', $t->vehicle_id)
-                    ->orderByDesc('timestamp')
-                    ->first();
-                $speed = $loc ? (float)$loc->speed : 30.0;
-                $color = $this->calculateRouteColor(['status' => $t->status], $speed);
-                if ($color === 'yellow' || $color === 'red') {
-                    $delayedTrips++;
-                }
-            }
+        $analytics = $service->getFleetAnalytics();
+        if ($analytics !== null) {
+            $this->jsonResponse([
+                'success' => true,
+                'analytics' => $analytics,
+            ]);
+            return;
         }
 
         $this->jsonResponse([
-            'success' => true,
-            'analytics' => [
-                'active_trips' => $activeTrips,
-                'completed_trips' => $completedTrips,
-                'delayed_trips' => $delayedTrips,
-                'avg_eta_accuracy' => 0.0,
-                'total_distance_today_km' => round($totalDist, 1),
-                'total_fuel_consumption_l' => round($totalFuel, 1),
-            ]
-        ]);
+            'success' => false,
+            'error' => $service->getClient()->getLastError() ?? 'Failed to retrieve analytics from centralized backend.',
+        ], $service->getClient()->getLastStatusCode() ?: 500);
+        return;
     }
 
     /**
@@ -938,12 +364,32 @@ public function getMyActiveDispatches(): void
     public function getNotifications(): void
     {
         $this->authorizeRole(['Driver', 'Dispatcher', 'Logistics Officer', 'Admin', 'User']);
-        $state = $this->getFleetState();
+
+        $service = $this->notificationService();
+        if (!$service->getClient()->isAvailable()) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => 'Centralized backend is unavailable.',
+                'notifications' => [],
+            ], 503);
+            return;
+        }
+
+        $notifications = $service->getNotifications();
+        if ($notifications !== null) {
+            $this->jsonResponse([
+                'success' => true,
+                'notifications' => $notifications,
+            ]);
+            return;
+        }
 
         $this->jsonResponse([
-            'success' => true,
-            'notifications' => array_reverse(array_slice($state['notifications'], -10)),
-        ]);
+            'success' => false,
+            'error' => $service->getClient()->getLastError() ?? 'Failed to retrieve notifications from centralized backend.',
+            'notifications' => [],
+        ], $service->getClient()->getLastStatusCode() ?: 500);
+        return;
     }
 
     /**
@@ -956,55 +402,26 @@ public function getMyActiveDispatches(): void
         $raw = file_get_contents('php://input');
         $data = json_decode($raw, true) ?: $_POST;
 
-        $targetSystem = $data['system'] ?? 'all';
+        $service = $this->routeService();
+        if (!$service->getClient()->isAvailable()) {
+            $this->jsonResponse([
+                'success' => false,
+                'error' => 'Centralized backend is unavailable. Integration cannot proceed.',
+            ], 503);
+            return;
+        }
 
-        $integrationPayload = [
-            'timestamp' => date('Y-m-d H:i:s'),
-            'logistics_1_smart_procurement' => [
-                'received_delivery_requests' => [
-                    ['req_id' => 'REQ-8801', 'item' => 'Electronics Supplies', 'qty' => 500, 'origin' => 'Port Area Pier 15', 'destination' => 'Quezon City Hub', 'priority' => 'High'],
-                    ['req_id' => 'REQ-8802', 'item' => 'Cold Chain Goods', 'qty' => 200, 'origin' => 'Batangas Port', 'destination' => 'Makati Distribution Center', 'priority' => 'Critical'],
-                ],
-                'sent_delivery_status' => [
-                    'active_dispatches' => 12,
-                    'in_transit' => 8,
-                    'completed_today' => 18,
-                ]
-            ],
-            'hr3_workforce_operations' => [
-                'received_driver_info' => [
-                    ['employee_id' => 'DRV-1001', 'name' => 'Harvey Villarin', 'license' => 'Professional Class 3', 'status' => 'On Shift', 'health_clearance' => 'Passed'],
-                    ['employee_id' => 'DRV-1002', 'name' => 'Jhoanna Reforsado', 'license' => 'Professional Class 3', 'status' => 'On Shift', 'health_clearance' => 'Passed'],
-                ],
-                'sent_driver_assignments' => [
-                    ['driver_id' => 'DRV-1001', 'assigned_vehicle' => 'TRK-101', 'shift_hours' => 6.5],
-                    ['driver_id' => 'DRV-1002', 'assigned_vehicle' => 'TRK-102', 'shift_hours' => 4.2],
-                ]
-            ],
-            'hr4_compensation_payroll' => [
-                'sent_trip_logs' => [
-                    ['driver' => 'Harvey Villarin', 'total_trips' => 4, 'total_hours' => 8.0, 'ot_hours' => 1.5, 'allowance_earned_php' => 1200.00],
-                    ['driver' => 'Jhoanna Reforsado', 'total_trips' => 3, 'total_hours' => 6.0, 'ot_hours' => 0.0, 'allowance_earned_php' => 900.00],
-                ]
-            ],
-            'financial_management_system' => [
-                'received_budget_allocation' => [
-                    ['category' => 'Fuel & Maintenance Q3', 'allocated_budget_php' => 500000.00, 'remaining_php' => 342500.00],
-                ],
-                'sent_fuel_and_transport_cost_reports' => [
-                    'total_fuel_cost_today_php' => 12450.00,
-                    'avg_cost_per_km_php' => 38.50,
-                    'monthly_transport_costs_php' => 84320.00,
-                ]
-            ]
-        ];
+        $res = $service->handleSystemIntegration($data);
+        if ($res) {
+            $this->jsonResponse($res);
+            return;
+        }
 
         $this->jsonResponse([
-            'success' => true,
-            'system' => $targetSystem,
-            'message' => 'Cross-system integration sync completed successfully.',
-            'payload' => $integrationPayload,
-        ]);
+            'success' => false,
+            'error' => $service->getClient()->getLastError() ?? 'Cross-system integration request failed on centralized backend.',
+        ], $service->getClient()->getLastStatusCode() ?: 500);
+        return;
     }
 
     // Helper utilities

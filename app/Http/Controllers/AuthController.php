@@ -17,6 +17,13 @@ use App\Notifications\Channels\BrevoApiException;
 
 class AuthController extends Controller
 {
+    protected \App\Services\CentralAuthService $centralAuth;
+
+    public function __construct(\App\Services\CentralAuthService $centralAuth)
+    {
+        $this->centralAuth = $centralAuth;
+    }
+
     private const TWO_FACTOR_VALID_MINUTES = 10;
 
     public function create(): View { return view('login'); }
@@ -27,34 +34,47 @@ class AuthController extends Controller
     {
         $credentials = $request->validate(['email' => ['required', 'email'], 'password' => ['required', 'string']]);
 
-        if (! Auth::validate($credentials)) {
-            AuditLog::record($request, 'Sign in failed', 'Authentication', 'Failed sign in attempt for '.strtolower($credentials['email']).'.');
-            return back()->withErrors(['email' => 'Invalid email or password.'])->onlyInput('email');
+        $client = $this->centralAuth->getClient();
+
+        // 1. Verify that the Centralized Backend is reachable
+        if (!$client->isAvailable()) {
+            return back()->withErrors([
+                'email' => 'The Centralized Backend server (Archonnell) is currently offline or unreachable. Please start the backend service on port 4000.'
+            ])->onlyInput('email');
         }
 
-        $user = Auth::getLastAttempted();
+        // 2. Authenticate with Centralized Backend
+        $centralLogin = $this->centralAuth->login($credentials['email'], $credentials['password']);
 
-        if (! $user instanceof User || $user->status !== 'active') {
-            AuditLog::record($request, 'Sign in blocked', 'Authentication', 'Sign in was blocked for an inactive or unavailable account.');
-            return back()->withErrors(['email' => 'Invalid email or password.'])->onlyInput('email');
-        }
+        if ($centralLogin) {
+            $centralUser = $centralLogin['user'] ?? [];
+            $globalRole = strtolower($centralUser['global_role'] ?? 'user');
+            $role = in_array($globalRole, ['superadmin', 'admin', 'fleet_manager', 'manager'], true) ? 'Admin' : ($globalRole === 'driver' ? 'Driver' : 'User');
 
-        if (app()->environment('local') && empty(env('BREVO_API_KEY'))) {
+            $user = User::updateOrCreate(
+                ['email' => strtolower($credentials['email'])],
+                [
+                    'name' => $centralUser['full_name'] ?? 'Archon User',
+                    User::passwordColumnName() => \Illuminate\Support\Facades\Hash::make($credentials['password']),
+                    'role' => $role,
+                    'status' => 'active',
+                ]
+            );
+
             Auth::login($user);
             $request->session()->regenerate();
-            AuditLog::record($request, 'Signed in', 'Authentication', 'Direct local development sign in.');
+            AuditLog::record($request, 'Signed in', 'Authentication', 'Centralized backend authenticated sign in.');
             return redirect()->to($this->dashboardPath($user));
         }
 
-        if (! $this->issueTwoFactorCode($user)) {
-            return back()
-                ->withErrors(['email' => 'We could not send a verification code. Please try again.'])
-                ->onlyInput('email');
+        if ($client->isUnavailable()) {
+            return back()->withErrors([
+                'email' => 'Centralized backend connection failed or timed out: ' . ($client->getLastError() ?? 'Server unreachable.')
+            ])->onlyInput('email');
         }
 
-        $request->session()->put('two_factor.user_id', $user->id);
-
-        return redirect()->route('two-factor.challenge');
+        AuditLog::record($request, 'Sign in failed', 'Authentication', 'Failed sign in attempt for '.strtolower($credentials['email']).'.');
+        return back()->withErrors(['email' => 'Invalid email or password.'])->onlyInput('email');
     }
 
     public function showTwoFactorChallenge(Request $request): View|RedirectResponse
@@ -227,6 +247,7 @@ class AuthController extends Controller
 
     public function destroy(Request $request): RedirectResponse
     {
+        $this->centralAuth->logout();
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();

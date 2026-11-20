@@ -12,10 +12,17 @@
                 <div class="avatar avatar-dark"><?= htmlspecialchars(strtoupper(substr($driver['name'] ?? 'DR', 0, 2))) ?></div>
                 <div>
                     <h4><?= htmlspecialchars($driver['name']) ?></h4>
-                    <p><?= htmlspecialchars($driver['role'] ?? 'Logistics Driver') ?> • <?= htmlspecialchars($driver['dispatches'] ?? '0 dispatches') ?></p>
+                    <p><?= htmlspecialchars($driver['role'] ?? '—') ?> • <?= htmlspecialchars($driver['dispatches'] ?? '0 dispatches') ?></p>
                 </div>
-                <div class="status-pill status-approved"><?= htmlspecialchars($driver['score'] ?? '9.5') ?> / 10</div>
+                <?php if (!empty($driver['score'])): ?>
+                    <div class="status-pill status-approved"><?= htmlspecialchars($driver['score']) ?> / 10</div>
+                <?php endif; ?>
             </div>
         <?php endforeach; ?>
+        <?php if (count($dashboard['drivers'] ?? []) === 0): ?>
+            <div style="padding:24px;text-align:center;color:#64748b;">
+                <?= !empty($dashboard['backendUnavailable']) ? '⚠️ Centralized backend is offline. Unable to load driver roster.' : 'No drivers registered in centralized backend.' ?>
+            </div>
+        <?php endif; ?>
     </div>
 </section>

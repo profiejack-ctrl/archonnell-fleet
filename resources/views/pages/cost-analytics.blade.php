@@ -94,13 +94,13 @@ $breakdown = $finance['breakdown'];
             <tbody>
                 <?php foreach (($dashboard['tripExpenses'] ?? []) as $expense): ?>
                     <tr>
-                        <?php if ($dashboard['isAdmin']): ?><td><?= htmlspecialchars($expense['submitted_by'], ENT_QUOTES, 'UTF-8') ?></td><?php endif; ?>
+                        <?php if ($dashboard['isAdmin']): ?><td><?= htmlspecialchars($expense['submitted_by'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td><?php endif; ?>
                         <td><?= htmlspecialchars($expense['date'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
-                        <td><?= htmlspecialchars($expense['vehicle'], ENT_QUOTES, 'UTF-8') ?></td>
-                        <td><span class="expense-category-tag"><?= htmlspecialchars($expense['category'], ENT_QUOTES, 'UTF-8') ?></span></td>
-                        <td><?= htmlspecialchars($expense['description'], ENT_QUOTES, 'UTF-8') ?></td>
-                        <td><strong>&#8369;<?= number_format((float) $expense['amount'], 2) ?></strong></td>
-                        <td><a class="expense-proof-link" href="<?= route('trip-expenses.receipt', $expense['id']) ?>" target="_blank" rel="noopener noreferrer">View receipt</a></td>
+                        <td><?= htmlspecialchars($expense['vehicle'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
+                        <td><span class="expense-category-tag"><?= htmlspecialchars($expense['category'] ?? '—', ENT_QUOTES, 'UTF-8') ?></span></td>
+                        <td><?= htmlspecialchars($expense['description'] ?? '', ENT_QUOTES, 'UTF-8') ?></td>
+                        <td><strong>&#8369;<?= number_format((float) ($expense['amount'] ?? 0), 2) ?></strong></td>
+                        <td><?php if (!empty($expense['receipt_url'])): ?><a class="expense-proof-link" href="<?= htmlspecialchars($expense['receipt_url'], ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener noreferrer">View receipt</a><?php elseif (!empty($expense['id']) && is_numeric($expense['id'])): ?><a class="expense-proof-link" href="<?= route('trip-expenses.receipt', $expense['id']) ?>" target="_blank" rel="noopener noreferrer">View receipt</a><?php else: ?>—<?php endif; ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if (empty($dashboard['tripExpenses'])): ?><tr><td colspan="<?= $dashboard['isAdmin'] ? 7 : 6 ?>" class="trip-expense-empty">No meal or parking expenses saved yet. Add an expense and attach its receipt photo.</td></tr><?php endif; ?>
@@ -123,7 +123,7 @@ $breakdown = $finance['breakdown'];
                 <label for="expense-vehicle">Vehicle</label>
                 <select class="form-control" id="expense-vehicle" name="vehicle_id" required>
                     <?php foreach ($dashboard['vehicleOptions'] as $vehicle): ?>
-                        <option value="<?= (int) $vehicle->id ?>"><?= htmlspecialchars($vehicle->name) ?></option>
+                        <option value="<?= htmlspecialchars((string) $vehicle->id, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($vehicle->name) ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
@@ -159,7 +159,7 @@ $breakdown = $finance['breakdown'];
                 <label for="trip-expense-vehicle">Vehicle</label>
                 <select class="form-control" id="trip-expense-vehicle" name="vehicle_id" required>
                     <option value="">Choose a vehicle</option>
-                    <?php foreach ($dashboard['vehicleOptions'] as $vehicle): ?><option value="<?= (int) $vehicle->id ?>"><?= htmlspecialchars($vehicle->plate_number.' · '.$vehicle->name, ENT_QUOTES, 'UTF-8') ?></option><?php endforeach; ?>
+                    <?php foreach ($dashboard['vehicleOptions'] as $vehicle): ?><option value="<?= htmlspecialchars((string) $vehicle->id, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($vehicle->plate_number.' · '.$vehicle->name, ENT_QUOTES, 'UTF-8') ?></option><?php endforeach; ?>
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:12px;"><label for="trip-expense-description">What was this for?</label><input class="form-control" id="trip-expense-description" name="description" maxlength="255" required placeholder="e.g. Driver meal during delivery"></div>

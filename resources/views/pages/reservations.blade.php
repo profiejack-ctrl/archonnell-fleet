@@ -345,10 +345,10 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                     <?php else: ?>
                         <?php foreach ($pendingRes as $r): ?>
                             <tr>
-                                <td style="font-weight:700;font-size:0.8rem;"><?= htmlspecialchars($r->reservation_no ?? '—') ?></td>
-                                <td><?= htmlspecialchars($r->employee_id ?? '—') ?></td>
-                                <td><?= htmlspecialchars($r->destination ?? '—') ?></td>
-                                <td><?= $r->requested_date ? date('M d, Y', strtotime($r->requested_date)) : '—' ?></td>
+                                <td style="font-weight:700;font-size:0.8rem;"><?= htmlspecialchars($r->reservation_no ?? ($r->dispatch_number ?? ($r->dispatch_no ?? '—'))) ?></td>
+                                <td><?= htmlspecialchars(!empty($r->employee_id) ? $r->employee_id : (!empty($r->requester_name) ? $r->requester_name : (!empty($r->driver_name) ? $r->driver_name : 'Fleet Requester'))) ?></td>
+                                <td><?= htmlspecialchars($r->destination ?? ($r->delivery_address ?? '—')) ?></td>
+                                <td><?= !empty($r->requested_date) ? date('M d, Y', strtotime($r->requested_date)) : '—' ?></td>
                                 <td><?= htmlspecialchars($r->vehicle_type ?? 'Any') ?></td>
                                 <td><?= (int)($r->passenger_count ?? 1) ?></td>
                                 <td><span class="sp sp-pending">Pending</span></td>
@@ -365,7 +365,7 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                                             <?= csrf_field() ?>
                                             <button type="submit" class="act-btn act-reject" title="Reject">✕ Reject</button>
                                         </form>
-                                    </div><?php endif; ?>
+                                    </div><?php else: ?><span class="sp sp-pending" style="font-size:0.75rem;">Awaiting Review</span><?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -401,16 +401,16 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                     <?php else: ?>
                         <?php foreach ($approvedRes as $r): ?>
                             <tr>
-                                <td style="font-weight:700;font-size:0.8rem;"><?= htmlspecialchars($r->reservation_no ?? '—') ?></td>
-                                <td><?= htmlspecialchars($r->employee_id ?? '—') ?></td>
-                                <td><?= htmlspecialchars($r->destination ?? '—') ?></td>
-                                <td><?= $r->requested_date ? date('M d, Y', strtotime($r->requested_date)) : '—' ?></td>
+                                <td style="font-weight:700;font-size:0.8rem;"><?= htmlspecialchars($r->reservation_no ?? ($r->dispatch_number ?? ($r->dispatch_no ?? '—'))) ?></td>
+                                <td><?= htmlspecialchars(!empty($r->employee_id) ? $r->employee_id : (!empty($r->requester_name) ? $r->requester_name : (!empty($r->driver_name) ? $r->driver_name : 'Fleet Requester'))) ?></td>
+                                <td><?= htmlspecialchars($r->destination ?? ($r->delivery_address ?? '—')) ?></td>
+                                <td><?= !empty($r->requested_date) ? date('M d, Y', strtotime($r->requested_date)) : '—' ?></td>
                                 <td><span class="sp sp-approved">Approved</span></td>
                                 <td>
                                     <?php if ($dashboard['isAdmin']): ?><button type="button" class="act-btn act-convert"
-                                            onclick="openConvertModal(<?= (int)$r->id ?>, '<?= htmlspecialchars(addslashes($r->reservation_no ?? ''), ENT_QUOTES) ?>', '<?= htmlspecialchars(addslashes($r->destination ?? ''), ENT_QUOTES) ?>')">
+                                            onclick="openConvertModal('<?= htmlspecialchars($r->id, ENT_QUOTES) ?>', '<?= htmlspecialchars(addslashes($r->reservation_no ?? ''), ENT_QUOTES) ?>', '<?= htmlspecialchars(addslashes($r->destination ?? ''), ENT_QUOTES) ?>')">
                                         🚐 Convert to Dispatch
-                                    </button><?php endif; ?>
+                                    </button><?php else: ?><span class="sp sp-approved" style="font-size:0.75rem;">Ready for dispatch</span><?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -451,9 +451,9 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                         <?php foreach ($scheduledDis as $d): ?>
                             <tr>
                                 <td style="font-weight:700;font-size:0.8rem;"><?= htmlspecialchars($d->dispatch_no ?? '—') ?></td>
-                                <td><?= htmlspecialchars($d->plate_number ?? '—') ?></td>
-                                <td><?= htmlspecialchars($d->driver_name ?? '—') ?></td>
-                                <td><?= htmlspecialchars($d->destination ?? '—') ?></td>
+                                <td><?= htmlspecialchars($d->plate_number && $d->plate_number !== '—' ? $d->plate_number : 'Unassigned') ?></td>
+                                <td><?= htmlspecialchars($d->driver_name && $d->driver_name !== '—' ? $d->driver_name : 'Unassigned') ?></td>
+                                <td><?= htmlspecialchars($d->destination && $d->destination !== '—' ? $d->destination : 'Site Delivery') ?></td>
                                 <td>
                                     <?php
                                     $pri = strtolower($d->priority ?? 'normal');
@@ -497,11 +497,11 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                         <?php foreach ($activeDis as $d): ?>
                             <tr>
                                 <td style="font-weight:700;font-size:0.8rem;"><?= htmlspecialchars($d->dispatch_no ?? '—') ?></td>
-                                <td><?= htmlspecialchars($d->plate_number ?? '—') ?></td>
-                                <td><?= htmlspecialchars($d->driver_name ?? '—') ?></td>
-                                <td><?= htmlspecialchars($d->destination ?? '—') ?></td>
+                                <td><?= htmlspecialchars($d->plate_number && $d->plate_number !== '—' ? $d->plate_number : 'Unassigned') ?></td>
+                                <td><?= htmlspecialchars($d->driver_name && $d->driver_name !== '—' ? $d->driver_name : 'Unassigned') ?></td>
+                                <td><?= htmlspecialchars($d->destination && $d->destination !== '—' ? $d->destination : 'Site Delivery') ?></td>
                                 <td style="font-size:0.8rem;color:var(--muted);">
-                                    <?= $d->updated_at ? date('M d, H:i', strtotime($d->updated_at)) : '—' ?>
+                                    <?= !empty($d->updated_at) ? date('M d, H:i', strtotime($d->updated_at)) : (!empty($d->created_at) ? date('M d, H:i', strtotime($d->created_at)) : '—') ?>
                                 </td>
                                 <td><span class="sp sp-active">Active</span></td>
                             </tr>
@@ -524,7 +524,7 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                             <td style="font-weight:700;font-size:0.8rem;"><?= htmlspecialchars($r->reservation_no ?? '—') ?></td>
                             <td><?= htmlspecialchars($r->requester_name ?? $r->employee_id ?? '—') ?></td>
                             <td><?= htmlspecialchars($r->destination ?? '—') ?></td>
-                            <td><?= $r->requested_date ? date('M d, Y', strtotime($r->requested_date)) : '—' ?></td>
+                            <td><?= !empty($r->requested_date) ? date('M d, Y', strtotime($r->requested_date)) : '—' ?></td>
                             <td><span class="sp sp-active">Dispatched</span></td>
                         </tr>
                     <?php endforeach; ?>
@@ -548,10 +548,10 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                 <tbody>
                     <?php foreach ($rejectedRes as $r): ?>
                         <tr>
-                            <td style="font-weight:700;font-size:0.8rem;"><?= htmlspecialchars($r->reservation_no ?? '—') ?></td>
-                            <td><?= htmlspecialchars($r->employee_id ?? '—') ?></td>
-                            <td><?= htmlspecialchars($r->destination ?? '—') ?></td>
-                            <td><?= $r->requested_date ? date('M d, Y', strtotime($r->requested_date)) : '—' ?></td>
+                            <td style="font-weight:700;font-size:0.8rem;"><?= htmlspecialchars(!empty($r->reservation_no) ? $r->reservation_no : (!empty($r->dispatch_number) ? $r->dispatch_number : '—')) ?></td>
+                            <td><?= htmlspecialchars(!empty($r->employee_id) ? $r->employee_id : (!empty($r->requester_name) ? $r->requester_name : (!empty($r->driver_name) ? $r->driver_name : 'Fleet Requester'))) ?></td>
+                            <td><?= htmlspecialchars(!empty($r->destination) ? $r->destination : (!empty($r->delivery_address) ? $r->delivery_address : 'Site Delivery')) ?></td>
+                            <td><?= !empty($r->requested_date) ? date('M d, Y', strtotime($r->requested_date)) : (!empty($r->created_at) ? date('M d, Y', strtotime($r->created_at)) : '—') ?></td>
                             <td><span class="sp sp-rejected">Rejected</span></td>
                         </tr>
                     <?php endforeach; ?>
@@ -671,7 +671,7 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                     <select class="form-control" id="dd-vehicle" name="vehicle_id" required>
                         <option value="">— Select Vehicle —</option>
                         <?php foreach ($vehicles as $v): ?>
-                            <option value="<?= (int)$v->id ?>"><?= htmlspecialchars($v->plate_number . ' (' . ($v->type ?? 'N/A') . ')') ?></option>
+                            <option value="<?= htmlspecialchars((string)$v->id, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($v->plate_number . ' (' . ($v->type ?? 'N/A') . ')') ?></option>
                         <?php endforeach; ?>
                         <?php if (count($vehicles) === 0): ?>
                             <option disabled>No available vehicles</option>
@@ -683,7 +683,7 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                     <select class="form-control" id="dd-driver" name="driver_id" required>
                         <option value="">— Select Driver —</option>
                         <?php foreach ($drivers as $dr): ?>
-                            <option value="<?= (int)$dr->id ?>"><?= htmlspecialchars($dr->driver_name) ?></option>
+                            <option value="<?= htmlspecialchars((string)$dr->id, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($dr->driver_name) ?></option>
                         <?php endforeach; ?>
                         <?php if (count($drivers) === 0): ?>
                             <option disabled>No available drivers</option>
@@ -739,7 +739,7 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                     <select class="form-control" id="cv-vehicle" name="vehicle_id" required>
                         <option value="">— Select Vehicle —</option>
                         <?php foreach ($vehicles as $v): ?>
-                            <option value="<?= (int)$v->id ?>"><?= htmlspecialchars($v->plate_number . ' (' . ($v->type ?? 'N/A') . ')') ?></option>
+                            <option value="<?= htmlspecialchars((string)$v->id, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($v->plate_number . ' (' . ($v->type ?? 'N/A') . ')') ?></option>
                         <?php endforeach; ?>
                         <?php if (count($vehicles) === 0): ?>
                             <option disabled>No available vehicles</option>
@@ -751,7 +751,7 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                     <select class="form-control" id="cv-driver" name="driver_id" required>
                         <option value="">— Select Driver —</option>
                         <?php foreach ($drivers as $dr): ?>
-                            <option value="<?= (int)$dr->id ?>"><?= htmlspecialchars($dr->driver_name) ?></option>
+                            <option value="<?= htmlspecialchars((string)$dr->id, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($dr->driver_name) ?></option>
                         <?php endforeach; ?>
                         <?php if (count($drivers) === 0): ?>
                             <option disabled>No available drivers</option>

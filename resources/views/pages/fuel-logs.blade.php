@@ -70,15 +70,18 @@ $driverOptions = $dashboard['driverOptions'] ?? collect();
     <?php else: ?>&mdash;<?php endif; ?>
 </td>
                             <td class="fuel-proof-links">
-    <?php if (!empty($log['fuel_level_before_image'])): ?><a href="<?= route('fuel-logs.proof', ['fuelLog' => $log['id'], 'type' => 'before']) ?>" target="_blank" rel="noopener noreferrer">Before photo</a><?php endif; ?>
-    <?php if (!empty($log['fuel_level_after_image'])): ?><a href="<?= route('fuel-logs.proof', ['fuelLog' => $log['id'], 'type' => 'after']) ?>" target="_blank" rel="noopener noreferrer">After photo</a><?php endif; ?>
-    <?php if (!empty($log['receipt_image'])): ?><a href="<?= route('fuel-logs.proof', ['fuelLog' => $log['id'], 'type' => 'receipt']) ?>" target="_blank" rel="noopener noreferrer">Receipt</a><?php endif; ?>
+    <?php if (!empty($log['fuel_level_before_image'])): ?><a href="<?= is_numeric($log['id'] ?? null) ? route('fuel-logs.proof', ['fuelLog' => $log['id'], 'type' => 'before']) : '#' ?>" target="_blank" rel="noopener noreferrer">Before photo</a><?php endif; ?>
+    <?php if (!empty($log['fuel_level_after_image'])): ?><a href="<?= is_numeric($log['id'] ?? null) ? route('fuel-logs.proof', ['fuelLog' => $log['id'], 'type' => 'after']) : '#' ?>" target="_blank" rel="noopener noreferrer">After photo</a><?php endif; ?>
+    <?php if (!empty($log['receipt_image'])): ?>
+        <?php $receiptUrl = filter_var($log['receipt_image'], FILTER_VALIDATE_URL) ? $log['receipt_image'] : (is_numeric($log['id'] ?? null) ? route('fuel-logs.proof', ['fuelLog' => $log['id'], 'type' => 'receipt']) : $log['receipt_image']); ?>
+        <a href="<?= htmlspecialchars($receiptUrl, ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener noreferrer">Receipt</a>
+    <?php endif; ?>
     <?php if (empty($log['fuel_level_before_image']) && empty($log['fuel_level_after_image']) && empty($log['receipt_image'])): ?>No photos<?php endif; ?>
 </td>
                         </tr>
                     <?php endforeach; ?>
                     <?php if ($fuelCount === 0): ?>
-                        <tr id="fuel-empty-row"><td colspan="<?= $dashboard['isAdmin'] ? 7 : 6 ?>" class="fuel-empty"><?= $dashboard['isAdmin'] ? 'No fuel logs have been saved yet.' : 'You have not submitted any fuel logs yet. Select "Log fuel" to add your first record.' ?></td></tr>
+                        <tr id="fuel-empty-row"><td colspan="<?= $dashboard['isAdmin'] ? 7 : 6 ?>" class="fuel-empty"><?= !empty($dashboard['backendUnavailable']) ? '⚠️ Centralized backend is offline. Unable to load fuel logs.' : ($dashboard['isAdmin'] ? 'No fuel logs have been saved yet.' : 'You have not submitted any fuel logs yet. Select "Log fuel" to add your first record.') ?></td></tr>
                     <?php endif; ?>
                     <tr id="fuel-no-results" hidden><td colspan="<?= $dashboard['isAdmin'] ? 7 : 6 ?>" class="fuel-empty">No records match your search.</td></tr>
                 </tbody>
@@ -101,7 +104,7 @@ $driverOptions = $dashboard['driverOptions'] ?? collect();
                 <select class="form-control" id="fuel-vehicle" name="vehicle_id" required>
                     <option value="">Choose a vehicle</option>
                     <?php foreach ($dashboard['vehicleOptions'] ?? [] as $vehicle): ?>
-                        <option value="<?= (int) $vehicle->id ?>" data-fuel-level="<?= htmlspecialchars((string) $vehicle->fuel_level, ENT_QUOTES, 'UTF-8') ?>" <?= (string) old('vehicle_id') === (string) $vehicle->id ? 'selected' : '' ?>><?= htmlspecialchars($vehicle->plate_number.' — '. $vehicle->name, ENT_QUOTES, 'UTF-8') ?></option>
+                        <option value="<?= htmlspecialchars((string) $vehicle->id, ENT_QUOTES, 'UTF-8') ?>" data-fuel-level="<?= htmlspecialchars((string) $vehicle->fuel_level, ENT_QUOTES, 'UTF-8') ?>" <?= (string) old('vehicle_id') === (string) $vehicle->id ? 'selected' : '' ?>><?= htmlspecialchars($vehicle->plate_number.' — '. $vehicle->name, ENT_QUOTES, 'UTF-8') ?></option>
                     <?php endforeach; ?>
                 </select>
                 <?php if (empty($dashboard['vehicleOptions'])): ?><small class="fuel-help">Add a vehicle before recording fuel.</small><?php endif; ?>
@@ -111,11 +114,11 @@ $driverOptions = $dashboard['driverOptions'] ?? collect();
                 <?php if ($dashboard['isAdmin']): ?>
                 <select class="form-control" id="fuel-driver" name="driver_id">
                     <option value="">No driver assigned</option>
-                    <?php foreach ($driverOptions as $driver): ?>
-                        <option value="<?= (int) $driver->id ?>" <?= (string) old('driver_id') === (string) $driver->id ? 'selected' : '' ?>><?= htmlspecialchars($driver->display_name.' ('.$driver->employee_id.')', ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php foreach (($dashboard['driverOptions'] ?? $driverOptions ?? []) as $driver): ?>
+                        <option value="<?= htmlspecialchars((string) $driver->id, ENT_QUOTES, 'UTF-8') ?>" <?= (string) old('driver_id') === (string) $driver->id ? 'selected' : '' ?>><?= htmlspecialchars($driver->display_name.' ('.$driver->employee_id.')', ENT_QUOTES, 'UTF-8') ?></option>
                     <?php endforeach; ?>
                 </select>
-                <?php if ($driverOptions->isEmpty()): ?><small class="fuel-help">You can still save this log under your account without a driver profile.</small><?php endif; ?>
+                <?php if (empty($dashboard['driverOptions']) && empty($driverOptions)): ?><small class="fuel-help">You can still save this log under your account without a driver profile.</small><?php endif; ?>
                 <?php else: ?>
                     <input class="form-control" type="text" id="fuel-driver" value="<?= htmlspecialchars($dashboard['user']['name'], ENT_QUOTES, 'UTF-8') ?> (you)" readonly aria-readonly="true">
                     <input type="hidden" name="driver_id" value="">

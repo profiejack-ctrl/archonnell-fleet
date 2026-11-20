@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\FleetEndpointController;
 use App\Http\Controllers\MobileAuthController;
 use App\Http\Controllers\ApiController;
 use Illuminate\Http\Request;
@@ -72,3 +73,27 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
+
+/*
+|--------------------------------------------------------------------------
+| Fleet Endpoints (v1 & unversioned)
+|--------------------------------------------------------------------------
+*/
+
+Route::prefix('v1/fleet')->group(function () {
+    Route::get('/reservations', [FleetEndpointController::class, 'getReservations']);
+    Route::post('/reservations', [FleetEndpointController::class, 'storeReservation']);
+    Route::get('/maintenance', [FleetEndpointController::class, 'getMaintenance']);
+    Route::post('/maintenance', [FleetEndpointController::class, 'storeMaintenance']);
+    Route::get('/trip-expenses', [FleetEndpointController::class, 'getTripExpenses']);
+    Route::post('/trip-expenses', [FleetEndpointController::class, 'storeTripExpense']);
+});
+
+Route::prefix('fleet')->group(function () {
+    Route::get('/reservations', [FleetEndpointController::class, 'getReservations']);
+    Route::post('/reservations', [FleetEndpointController::class, 'storeReservation']);
+    Route::get('/maintenance', [FleetEndpointController::class, 'getMaintenance']);
+    Route::post('/maintenance', [FleetEndpointController::class, 'storeMaintenance']);
+    Route::get('/trip-expenses', [FleetEndpointController::class, 'getTripExpenses']);
+    Route::post('/trip-expenses', [FleetEndpointController::class, 'storeTripExpense']);
+});

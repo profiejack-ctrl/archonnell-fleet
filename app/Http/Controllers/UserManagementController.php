@@ -14,6 +14,13 @@ use Illuminate\Validation\Rule;
 
 class UserManagementController extends Controller
 {
+    protected \App\Services\CentralAuthService $authService;
+
+    public function __construct(\App\Services\CentralAuthService $authService)
+    {
+        $this->authService = $authService;
+    }
+
     private const ROLES = ['User', 'Driver', 'Admin'];
 
     public function store(Request $request): RedirectResponse
@@ -28,6 +35,21 @@ class UserManagementController extends Controller
             'status' => ['required', Rule::in(['active', 'inactive'])],
         ]);
 
+        // 1. Submit to Centralized Backend Service FIRST
+        $created = $this->authService->createUser([
+            'email' => $data['email'],
+            'password' => $data['password'],
+            'name' => $data['name'],
+            'role' => $data['role'],
+        ]);
+
+        if (!$created && $this->authService->getClient()->getLastStatusCode() !== 404) {
+            $errorMsg = $this->authService->getClient()->getLastError()
+                ?? 'Failed to create user on the centralized backend.';
+            return back()->withInput()->withErrors(['error' => $errorMsg]);
+        }
+
+        // 2. Only after centralized confirmation, record locally
         $user = DB::transaction(function () use ($data) {
             $passwordField = User::passwordColumnName();
 
@@ -45,18 +67,20 @@ class UserManagementController extends Controller
         });
 
         Alert::log('👤', 'User Added', "{$user->name} was added as {$user->role} by {$request->user()->name}.");
-
         AuditLog::record($request, 'User created', 'User Management', "Created {$user->name} ({$user->email}) with the {$user->role} role and {$user->status} status.");
 
         return back()->with('status', 'User created successfully.');
     }
 
-    public function update(Request $request, User $user): RedirectResponse
+    public function update(Request $request, $user): RedirectResponse
     {
         $this->authorizeAdmin($request);
 
+        $userModel = $user instanceof User ? $user : (User::find($user) ?? User::where('email', $request->input('email'))->first());
+        abort_unless($userModel, 404);
+
         if ($request->boolean('status_toggle')) {
-            if ($user->id === $request->user()->id) {
+            if ($userModel->id === $request->user()->id) {
                 return back()->withErrors(['user' => 'You cannot change your own account status.']);
             }
 
@@ -64,60 +88,86 @@ class UserManagementController extends Controller
                 'status' => ['required', Rule::in(['active', 'inactive'])],
             ]);
 
-            DB::transaction(function () use ($user, $data) {
-                $user->status = $data['status'];
-                $user->save();
-                $this->syncDriverRecord($user);
+            // Synchronize with Centralized Backend Service FIRST
+            $updated = $this->authService->updateUser((string)$userModel->id, [
+                'status' => $data['status'],
+            ]);
+
+            if (!$updated && $this->authService->getClient()->getLastStatusCode() !== 404) {
+                $errorMsg = $this->authService->getClient()->getLastError()
+                    ?? 'Failed to update user status on the centralized backend.';
+                return back()->withErrors(['error' => $errorMsg]);
+            }
+
+            DB::transaction(function () use ($userModel, $data) {
+                $userModel->status = $data['status'];
+                $userModel->save();
+                $this->syncDriverRecord($userModel);
             });
 
-            $status = $user->status;
+            $status = $userModel->status;
             Alert::log(
                 $status === 'inactive' ? 'OFF' : 'ON',
                 $status === 'inactive' ? 'User Deactivated' : 'User Reactivated',
-                "{$user->name}'s account was marked {$status} by {$request->user()->name}.",
+                "{$userModel->name}'s account was marked {$status} by {$request->user()->name}.",
                 $status === 'inactive' ? 'warning' : 'info',
             );
 
-            AuditLog::record($request, $status === 'inactive' ? 'Account deactivated' : 'Account reactivated', 'User Management', "Changed {$user->name}'s account status to {$status}.");
+            AuditLog::record($request, $status === 'inactive' ? 'Account deactivated' : 'Account reactivated', 'User Management', "Changed {$userModel->name}'s account status to {$status}.");
 
             return back()->with('status', "User account {$status} successfully.");
         }
 
         $data = $request->validate([
             'name' => ['required', 'string', 'max:100'],
-            'email' => ['required', 'string', 'email', 'max:100', Rule::unique('users', 'email')->ignore($user->id)],
+            'email' => ['required', 'string', 'email', 'max:100', Rule::unique('users', 'email')->ignore($userModel->id)],
             'password' => ['nullable', 'string', 'min:8', 'confirmed'],
             'role' => ['required', Rule::in(self::ROLES)],
             'status' => ['required', Rule::in(['active', 'inactive'])],
         ]);
 
-        $before = ['name' => $user->name, 'email' => $user->email, 'role' => $user->role, 'status' => $user->status];
-        DB::transaction(function () use ($user, $data) {
-            $user->name = $data['name'];
-            $user->email = strtolower($data['email']);
-            $user->role = $data['role'];
-            $user->status = $data['status'];
+        // Synchronize with Centralized Backend Service FIRST
+        $updated = $this->authService->updateUser((string)$userModel->id, [
+            'name' => $data['name'] ?? null,
+            'email' => $data['email'] ?? null,
+            'role' => $data['role'] ?? null,
+            'status' => $data['status'] ?? null,
+            'password' => $data['password'] ?? null,
+        ]);
+
+        if (!$updated && $this->authService->getClient()->getLastStatusCode() !== 404) {
+            $errorMsg = $this->authService->getClient()->getLastError()
+                ?? 'Failed to update user on the centralized backend.';
+            return back()->withInput()->withErrors(['error' => $errorMsg]);
+        }
+
+        $before = ['name' => $userModel->name, 'email' => $userModel->email, 'role' => $userModel->role, 'status' => $userModel->status];
+        DB::transaction(function () use ($userModel, $data) {
+            $userModel->name = $data['name'];
+            $userModel->email = strtolower($data['email']);
+            $userModel->role = $data['role'];
+            $userModel->status = $data['status'];
 
             if (! empty($data['password'])) {
-                $user->{User::passwordColumnName()} = Hash::make($data['password']);
+                $userModel->{User::passwordColumnName()} = Hash::make($data['password']);
             }
 
-            $user->save();
-            $this->syncDriverRecord($user);
+            $userModel->save();
+            $this->syncDriverRecord($userModel);
         });
 
-        Alert::log('✏️', 'User Updated', "{$user->name}'s account was updated by {$request->user()->name}.");
+        Alert::log('✏️', 'User Updated', "{$userModel->name}'s account was updated by {$request->user()->name}.");
 
         $changes = [];
         foreach (['name', 'email', 'role', 'status'] as $field) {
-            if ($before[$field] !== $user->{$field}) {
-                $changes[] = ucfirst($field)." changed from {$before[$field]} to {$user->{$field}}";
+            if ($before[$field] !== $userModel->{$field}) {
+                $changes[] = ucfirst($field)." changed from {$before[$field]} to {$userModel->{$field}}";
             }
         }
         if (! empty($data['password'])) {
             $changes[] = 'password reset';
         }
-        AuditLog::record($request, 'User updated', 'User Management', "Updated {$user->name}'s account: ".(count($changes) ? implode('; ', $changes) : 'no profile fields changed').'.');
+        AuditLog::record($request, 'User updated', 'User Management', "Updated {$userModel->name}'s account: ".(count($changes) ? implode('; ', $changes) : 'no profile fields changed').'.');
 
         return back()->with('status', 'User updated successfully.');
     }
@@ -147,7 +197,6 @@ class UserManagementController extends Controller
             $driver->role = 'Driver';
             $driver->status = $status;
             $driver->save();
-
             return;
         }
 

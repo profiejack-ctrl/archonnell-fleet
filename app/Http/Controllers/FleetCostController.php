@@ -8,6 +8,9 @@ use App\Models\Driver;
 use App\Models\FuelLog;
 use App\Models\MaintenanceRecord;
 use App\Models\Vehicle;
+use App\Services\FuelService;
+use App\Services\MaintenanceService;
+use App\Services\VehicleService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,6 +20,17 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class FleetCostController extends Controller
 {
+    protected FuelService $fuelService;
+    protected MaintenanceService $maintenanceService;
+    protected VehicleService $vehicleService;
+
+    public function __construct(FuelService $fuelService, MaintenanceService $maintenanceService, VehicleService $vehicleService)
+    {
+        $this->fuelService = $fuelService;
+        $this->maintenanceService = $maintenanceService;
+        $this->vehicleService = $vehicleService;
+    }
+
     public function storeFuelLog(Request $request): RedirectResponse
     {
         if ($request->user()->role !== 'Admin') {
@@ -26,8 +40,8 @@ class FleetCostController extends Controller
         }
 
         $data = $request->validate([
-            'vehicle_id' => ['required', Rule::exists('vehicles', 'id')],
-            'driver_id' => ['nullable', Rule::exists('drivers', 'id')],
+            'vehicle_id' => ['required', 'string'],
+            'driver_id' => ['nullable', 'string'],
             'liters' => ['required', 'numeric', 'min:0.1', 'max:2000'],
             'cost' => ['required', 'numeric', 'min:0', 'max:1000000'],
             'fuel_level_before' => ['required', 'numeric', 'between:0,100'],
@@ -38,47 +52,120 @@ class FleetCostController extends Controller
             'logged_at' => ['required', 'date', 'before_or_equal:today'],
         ]);
 
-        [$log, $vehicle, $fuelBeforeMismatch, $savedFuelLevel] = DB::transaction(function () use ($data, $request): array {
-            $vehicle = Vehicle::whereKey($data['vehicle_id'])->lockForUpdate()->firstOrFail();
-            $savedFuelLevel = (float) $vehicle->fuel_level;
-            $fuelBefore = (float) $data['fuel_level_before'];
+        $originalVehicleId = $data['vehicle_id'];
+        $originalDriverId = !empty($data['driver_id']) ? $data['driver_id'] : null;
 
-            $fuelBeforeMismatch = abs($fuelBefore - $savedFuelLevel) > 0.5;
+        $receiptUrl = null;
+        if ($request->hasFile('receipt_image')) {
+            $receiptPath = $request->file('receipt_image')->store('fuel-logs/receipts', 'public');
+            $receiptUrl = asset('storage/' . $receiptPath);
+        }
 
-            $data['fuel_level_before_image'] = $request->file('fuel_level_before_image')->store('fuel-logs/proofs', 'local');
-            $data['fuel_level_after_image'] = $request->file('fuel_level_after_image')->store('fuel-logs/proofs', 'local');
-            $data['receipt_image'] = $request->file('receipt_image')->store('fuel-logs/proofs', 'local');
-            $data['user_id'] = $request->user()->id;
+        // 1. Submit to Centralized Backend Service FIRST
+        $centralRes = $this->fuelService->logFuel([
+            'vehicle_id' => $originalVehicleId,
+            'driver_id' => $originalDriverId,
+            'liters' => (float)$data['liters'],
+            'cost' => (float)$data['cost'],
+            'odometer' => (float)($request->input('odometer', 0)),
+            'receipt_url' => $receiptUrl,
+        ]);
 
-            $log = FuelLog::create($data);
-            $vehicle->update(['fuel_level' => $data['fuel_level_after']]);
+        if (!$centralRes) {
+            $errorMsg = $this->fuelService->getClient()->getLastError()
+                ?? 'Failed to save fuel log to the centralized backend.';
+            return back()->withInput()->withErrors(['error' => $errorMsg]);
+        }
 
-            return [$log, $vehicle, $fuelBeforeMismatch, $savedFuelLevel];
-        });
+        // 2. Resolve or mirror local vehicle for SQLite foreign key integrity
+        $vehicle = is_numeric($originalVehicleId)
+            ? Vehicle::find($originalVehicleId)
+            : Vehicle::where('plate_number', $originalVehicleId)->first();
 
-        if ($fuelBeforeMismatch) {
+        if (!$vehicle && !is_numeric($originalVehicleId)) {
+            $centralVehicles = $this->vehicleService->getVehicles() ?? [];
+            $matched = collect($centralVehicles)->first(fn($v) => ($v['id'] ?? '') === $originalVehicleId);
+            $plate = $matched['plate_number'] ?? ('FLT-' . substr($originalVehicleId, 0, 6));
+            $name = $matched['model'] ?? ($matched['name'] ?? 'Fleet Vehicle');
+
+            try {
+                $vehicle = Vehicle::firstOrCreate(
+                    ['plate_number' => $plate],
+                    [
+                        'name' => $name,
+                        'vehicle_code' => $plate,
+                        'status' => 'Active',
+                        'fuel_level' => 50,
+                        'odometer' => (int) round((float)($matched['current_odometer'] ?? 0)),
+                    ]
+                );
+            } catch (\Throwable $e) {
+                // If local create fails, continue safely
+            }
+        }
+
+        // 3. Record locally in SQLite (resilient, does not block on FK or schema mismatch)
+        $fuelBeforeMismatch = false;
+        $savedFuelLevel = 50.0;
+        $localLogData = $data;
+
+        if ($vehicle) {
+            $localLogData['vehicle_id'] = $vehicle->id;
+        } else {
+            $fallback = Vehicle::first();
+            $localLogData['vehicle_id'] = $fallback?->id ?? 1;
+        }
+
+        if (!empty($originalDriverId)) {
+            $localDriver = is_numeric($originalDriverId) ? Driver::find($originalDriverId) : null;
+            $localLogData['driver_id'] = $localDriver?->id;
+        } else {
+            $localLogData['driver_id'] = null;
+        }
+
+        try {
+            DB::transaction(function () use (&$localLogData, $request, $vehicle, &$fuelBeforeMismatch, &$savedFuelLevel) {
+                $savedFuelLevel = (float) ($vehicle?->fuel_level ?? 0);
+                $fuelBefore = (float) ($localLogData['fuel_level_before'] ?? 0);
+                $fuelBeforeMismatch = abs($fuelBefore - $savedFuelLevel) > 0.5;
+
+                $localLogData['fuel_level_before_image'] = $request->file('fuel_level_before_image')?->store('fuel-logs/proofs', 'local');
+                $localLogData['fuel_level_after_image'] = $request->file('fuel_level_after_image')?->store('fuel-logs/proofs', 'local');
+                $localLogData['receipt_image'] = $request->file('receipt_image')?->store('fuel-logs/proofs', 'local');
+                $localLogData['user_id'] = $request->user()->id;
+
+                FuelLog::create($localLogData);
+                if ($vehicle && isset($localLogData['fuel_level_after'])) {
+                    $vehicle->update(['fuel_level' => $localLogData['fuel_level_after']]);
+                }
+            });
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Local SQLite fuel log mirror skipped: ' . $e->getMessage());
+        }
+
+        if ($fuelBeforeMismatch && $vehicle) {
             Alert::log('!', 'Fuel Reading Mismatch', sprintf(
                 '%s before reading was entered as %.1f; the saved vehicle reading was %.1f. Please review the proof photos.',
                 $vehicle->name ?? 'Vehicle',
-                $log->fuel_level_before,
+                $data['fuel_level_before'] ?? 0,
                 $savedFuelLevel,
             ), 'warning');
         }
 
-        $driver = isset($data['driver_id']) ? Driver::with('user')->find($data['driver_id']) : null;
+        $driver = !empty($originalDriverId) && is_numeric($originalDriverId) ? Driver::with('user')->find($originalDriverId) : null;
         $driverName = $driver?->user?->name
             ?? $driver?->name
-            ?? ($request->user()->role !== 'Admin' ? $request->user()->name : 'No driver assigned');
+            ?? ($request->user()->role !== 'Admin' ? $request->user()->name : 'Assigned driver');
 
         Alert::log("\u{26FD}", 'Fuel Logged', sprintf(
             '%s: %.1fL logged for PHP %s by %s (driver: %s).',
-            $vehicle->name ?? 'Vehicle',
-            $log->liters,
-            number_format($log->cost, 2),
+            $vehicle?->name ?? 'Vehicle',
+            (float)$data['liters'],
+            number_format((float)$data['cost'], 2),
             $request->user()->name,
             $driverName
         ));
-        AuditLog::record($request, 'Fuel logged', 'Fuel & Costs', sprintf('Logged %.1fL for %s at PHP %s.', $log->liters, $vehicle->name ?? 'vehicle', number_format($log->cost, 2)));
+        AuditLog::record($request, 'Fuel logged', 'Fuel & Costs', sprintf('Logged %.1fL for %s at PHP %s.', (float)$data['liters'], $vehicle?->name ?? 'vehicle', number_format((float)$data['cost'], 2)));
 
         return back()->with('status', 'Fuel log recorded.');
     }
@@ -104,23 +191,70 @@ class FleetCostController extends Controller
     public function storeMaintenance(Request $request): RedirectResponse
     {
         $data = $request->validate([
-            'vehicle_id' => ['required', Rule::exists('vehicles', 'id')],
+            'vehicle_id' => ['required', 'string'],
             'description' => ['required', 'string', 'max:150'],
             'cost' => ['required', 'numeric', 'min:0', 'max:1000000'],
             'serviced_at' => ['required', 'date', 'before_or_equal:today'],
         ]);
 
-        $record = MaintenanceRecord::create($data);
-        $vehicle = Vehicle::find($data['vehicle_id']);
+        $originalVehicleId = $data['vehicle_id'];
+
+        // 1. Submit to Centralized Backend Service FIRST
+        $centralRes = $this->maintenanceService->logMaintenance([
+            'vehicle_id' => $originalVehicleId,
+            'service_type' => 'Maintenance',
+            'description' => $data['description'],
+            'cost' => (float)$data['cost'],
+            'serviced_at' => $data['serviced_at'],
+        ]);
+
+        if (!$centralRes) {
+            $errorMsg = $this->maintenanceService->getClient()->getLastError()
+                ?? 'Failed to save maintenance record to the centralized backend.';
+            return back()->withInput()->withErrors(['error' => $errorMsg]);
+        }
+
+        // 2. Resolve or mirror local vehicle for SQLite
+        $vehicle = is_numeric($originalVehicleId)
+            ? Vehicle::find($originalVehicleId)
+            : Vehicle::where('plate_number', $originalVehicleId)->first();
+
+        if (!$vehicle && !is_numeric($originalVehicleId)) {
+            $centralVehicles = $this->vehicleService->getVehicles() ?? [];
+            $matched = collect($centralVehicles)->first(fn($v) => ($v['id'] ?? '') === $originalVehicleId);
+            $plate = $matched['plate_number'] ?? ('FLT-' . substr($originalVehicleId, 0, 6));
+            $name = $matched['model'] ?? ($matched['name'] ?? 'Fleet Vehicle');
+
+            try {
+                $vehicle = Vehicle::firstOrCreate(
+                    ['plate_number' => $plate],
+                    ['name' => $name, 'vehicle_code' => $plate, 'status' => 'Active', 'fuel_level' => 50, 'odometer' => 0]
+                );
+            } catch (\Throwable $e) {}
+        }
+
+        $localMaintData = $data;
+        if ($vehicle) {
+            $localMaintData['vehicle_id'] = $vehicle->id;
+        } else {
+            $fallback = Vehicle::first();
+            $localMaintData['vehicle_id'] = $fallback?->id ?? 1;
+        }
+
+        try {
+            MaintenanceRecord::create($localMaintData);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Local SQLite maintenance record mirror skipped: ' . $e->getMessage());
+        }
 
         Alert::log("\u{1F527}", 'Maintenance Logged', sprintf(
-            '%s: %s (â‚±%s) logged by %s.',
-            $vehicle->name ?? 'Vehicle',
-            $record->description,
-            number_format($record->cost, 2),
+            '%s: %s (PHP %s) logged by %s.',
+            $vehicle?->name ?? 'Vehicle',
+            $data['description'],
+            number_format((float)$data['cost'], 2),
             $request->user()->name
         ), 'warning');
-        AuditLog::record($request, 'Maintenance logged', 'Fuel & Costs', sprintf('Recorded %s maintenance for %s at PHP %s.', $record->description, $vehicle->name ?? 'vehicle', number_format($record->cost, 2)));
+        AuditLog::record($request, 'Maintenance logged', 'Fuel & Costs', sprintf('Recorded %s maintenance for %s at PHP %s.', $data['description'], $vehicle?->name ?? 'vehicle', number_format((float)$data['cost'], 2)));
 
         return back()->with('status', 'Maintenance cost recorded.');
     }

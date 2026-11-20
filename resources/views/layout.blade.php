@@ -10,9 +10,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="{{ asset('css/app.css') }}?v=20261002" />
     <script>
-        window.FLEETOPS_API_BASE = 'http://localhost:4000/api/v1/fleet';
-        window.ARCHON_GATEWAY_URL = 'http://localhost:4000';
-        window.ARCHON_AUTH_URL = 'http://localhost:4000/api/v1/auth';
+        window.FLEETOPS_API_BASE = '/api';
+        window.ARCHON_GATEWAY_URL = '';
+        window.ARCHON_AUTH_URL = '/api';
         try {
             const token = localStorage.getItem('archon_token');
             if (token) {
@@ -670,6 +670,41 @@
         </header>
 
         <h1 class="page-title"><?= htmlspecialchars($dashboard['title']) ?></h1>
+
+        <?php if (session('error') || (!empty($errors) && $errors->any())): ?>
+            <div style="background:#fef2f2;border:1px solid #f87171;color:#991b1b;padding:12px 18px;border-radius:10px;margin-bottom:18px;display:flex;align-items:center;gap:12px;font-weight:600;">
+                <span style="font-size:1.3rem;">❌</span>
+                <div>
+                    <div>Operation Failed</div>
+                    <div style="font-size:0.85rem;font-weight:400;color:#b91c1c;"><?= htmlspecialchars(session('error') ?? (!empty($errors) ? $errors->first() : ''), ENT_QUOTES, 'UTF-8') ?></div>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if (session('success')): ?>
+            <div style="background:#f0fdf4;border:1px solid #86efac;color:#166534;padding:12px 18px;border-radius:10px;margin-bottom:18px;display:flex;align-items:center;gap:12px;font-weight:600;">
+                <span style="font-size:1.3rem;">✅</span>
+                <div style="font-size:0.85rem;font-weight:400;color:#15803d;"><?= htmlspecialchars(session('success'), ENT_QUOTES, 'UTF-8') ?></div>
+            </div>
+        <?php endif; ?>
+
+        <?php if (!empty($dashboard['backendUnavailable'])): ?>
+            <div style="background:#fef2f2;border:1px solid #f87171;color:#991b1b;padding:12px 18px;border-radius:10px;margin-bottom:18px;display:flex;align-items:center;gap:12px;font-weight:600;">
+                <span style="font-size:1.3rem;">⚠️</span>
+                <div>
+                    <div>Centralized Backend Unavailable</div>
+                    <div style="font-size:0.85rem;font-weight:400;color:#b91c1c;"><?= htmlspecialchars($dashboard['backendError'] ?? 'The Archonnell API server is unreachable. No live records can be displayed.', ENT_QUOTES, 'UTF-8') ?></div>
+                </div>
+            </div>
+        <?php elseif (!empty($dashboard['endpointErrors'])): ?>
+            <div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;padding:12px 18px;border-radius:10px;margin-bottom:18px;display:flex;align-items:center;gap:12px;font-weight:600;">
+                <span style="font-size:1.3rem;">⚠️</span>
+                <div>
+                    <div>Centralized Endpoint Limitation</div>
+                    <div style="font-size:0.85rem;font-weight:400;color:#b45309;"><?= htmlspecialchars(implode(' · ', $dashboard['endpointErrors']), ENT_QUOTES, 'UTF-8') ?></div>
+                </div>
+            </div>
+        <?php endif; ?>
 
         @include('pages.'.$dashboard['page'], ['dashboard' => $dashboard])
     </main>

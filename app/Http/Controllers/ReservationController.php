@@ -4,107 +4,114 @@ namespace App\Http\Controllers;
 
 use App\Models\Reservation;
 use App\Models\AuditLog;
+use App\Services\ReservationService;
 use Illuminate\Http\Request;
 
 class ReservationController extends Controller
 {
+    protected ReservationService $reservationService;
+
+    public function __construct(ReservationService $reservationService)
+    {
+        $this->reservationService = $reservationService;
+    }
+
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'employee_id' => ($request->user()->role === 'Admin' ? 'required' : 'nullable').'|string|max:50',
+            'employee_id' => 'nullable|string|max:50',
             'destination' => 'required|string|max:255',
-            'requested_date' => 'required|date|after_or_equal:today',
+            'requested_date' => 'required|date',
             'passenger_count' => 'required|integer|min:1|max:60',
             'purpose' => 'required|string|max:255',
             'vehicle_type' => 'nullable|string|max:100',
             'remarks' => 'nullable|string',
-            'requested_time' => 'nullable|date_format:H:i',
-        ], [
-            'requested_date.after_or_equal' => 'Requested date cannot be in the past.',
-            'passenger_count.min' => 'Passenger count must be at least 1.',
-            'passenger_count.max' => 'Passenger count cannot exceed 60.',
-            'purpose.required' => 'Purpose is required for reservation creation.',
-            'destination.required' => 'Destination is required for reservation creation.',
+            'requested_time' => 'nullable',
         ]);
 
-        if ($request->user()->role !== 'Admin') {
-            $validated['employee_id'] = (string) $request->user()->id;
-        } else {
-            $validEmployee = \Illuminate\Support\Facades\DB::table('drivers')
-                ->join('users', 'drivers.user_id', '=', 'users.id')
-                ->whereRaw('LOWER(drivers.status) = ?', ['active'])
-                ->where('drivers.employee_id', $validated['employee_id'])
-                ->exists();
+        $userId = (string)$request->user()?->id;
 
-            if (! $validEmployee) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
-                    'employee_id' => 'Please choose a valid active driver through the employee ID list.',
+        // 1. Submit through Centralized Backend Service FIRST
+        $created = $this->reservationService->createReservation([
+            'user_id' => $userId,
+            'driver_name' => $request->user()?->name ?? '',
+            'employee_id' => $validated['employee_id'] ?? $userId,
+            'vehicle_type' => $validated['vehicle_type'] ?? '',
+            'destination' => $validated['destination'],
+            'requested_date' => $validated['requested_date'],
+            'requested_time' => $validated['requested_time'] ?? null,
+            'duration_days' => 1,
+            'passenger_count' => (int) $validated['passenger_count'],
+            'purpose' => $validated['purpose'],
+            'remarks' => $validated['remarks'] ?? '',
+        ]);
+
+        // Require successful centralized confirmation
+        if (!$created) {
+            $errorMsg = $this->reservationService->getClient()->getLastError()
+                ?? 'Failed to submit reservation to the centralized backend.';
+            return back()->withInput()->withErrors(['error' => $errorMsg]);
+        }
+
+        // 2. Only after centralized confirmation succeeds
+        try {
+            $validated['reservation_no'] = $created['reservation_no'] ?? ('RES-' . strtoupper((string) \Illuminate\Support\Str::uuid()));
+            $validated['status'] = 'Pending';
+            $validated['user_id'] = $request->user()?->id;
+            Reservation::create($validated);
+            AuditLog::record($request, 'Reservation submitted', 'Reservations', "Submitted reservation to {$validated['destination']}.");
+        } catch (\Throwable) {}
+
+        return back()->with('success', 'Reservation submitted and sent for approval to the central backend.');
+    }
+
+    public function approve(Request $request, $id)
+    {
+        $resId = is_object($id) ? (string)$id->id : (string)$id;
+
+        // 1. Approve via Centralized Backend Service FIRST
+        $approved = $this->reservationService->approveReservation($resId, (string)$request->user()?->id);
+        if (!$approved) {
+            $errorMsg = $this->reservationService->getClient()->getLastError()
+                ?? 'Failed to approve reservation on centralized backend.';
+            return back()->withErrors(['error' => $errorMsg]);
+        }
+
+        // 2. Only after centralized confirmation
+        try {
+            $reservation = is_numeric($resId) ? Reservation::find($resId) : Reservation::where('id', $resId)->first();
+            if ($reservation) {
+                $reservation->update([
+                    'status' => 'Approved',
+                    'approved_by' => $request->user()?->id,
+                    'approved_at' => now(),
                 ]);
             }
-        }
+        } catch (\Throwable) {}
 
-        $validated['reservation_no'] = 'RES-' . strtoupper((string) \Illuminate\Support\Str::uuid());
-        $validated['status'] = 'Pending';
-        $validated['user_id'] = $request->user()->id;
-        if ($request->user()->role !== 'Admin') {
-            $validated['employee_id'] = (string) $request->user()->id;
-        }
-
-        $reservation = Reservation::create($validated);
-        AuditLog::record($request, 'Reservation submitted', 'Reservations', "Submitted reservation {$reservation->reservation_no} to {$reservation->destination}.");
-
-        return back()->with('success', 'Reservation submitted and sent for approval.');
+        return back()->with('success', 'Reservation approved successfully in central backend.');
     }
 
-    public function approve(Request $request, Reservation $reservation)
+    public function reject(Request $request, $id)
     {
-        if ($reservation->status === 'Approved') {
-            return back()->withErrors('Reservation is already approved.');
+        $resId = is_object($id) ? (string)$id->id : (string)$id;
+
+        // 1. Reject via Centralized Backend Service FIRST
+        $rejected = $this->reservationService->rejectReservation($resId);
+        if (!$rejected) {
+            $errorMsg = $this->reservationService->getClient()->getLastError()
+                ?? 'Failed to reject reservation on centralized backend.';
+            return back()->withErrors(['error' => $errorMsg]);
         }
 
-        if ($reservation->status === 'Rejected') {
-            return back()->withErrors('Cannot approve a rejected reservation.');
-        }
+        // 2. Only after centralized confirmation
+        try {
+            $reservation = is_numeric($resId) ? Reservation::find($resId) : Reservation::where('id', $resId)->first();
+            if ($reservation) {
+                $reservation->update(['status' => 'Rejected']);
+            }
+        } catch (\Throwable) {}
 
-        if ($reservation->status === 'Dispatched') {
-            return back()->withErrors('Cannot approve an already dispatched reservation.');
-        }
-
-        if ($reservation->status !== 'Pending') {
-            return back()->withErrors('Only pending reservations can be approved.');
-        }
-
-        $reservation->update([
-            'status' => 'Approved',
-            'approved_by' => $request->user()?->id,
-            'approved_at' => now(),
-        ]);
-        AuditLog::record($request, 'Reservation approved', 'Reservations', "Approved reservation {$reservation->reservation_no}.");
-
-        return back()->with('success', 'Reservation approved successfully.');
-    }
-
-    public function reject(Request $request, Reservation $reservation)
-    {
-        if ($reservation->status === 'Approved') {
-            return back()->withErrors('Cannot reject an approved reservation.');
-        }
-
-        if ($reservation->status === 'Rejected') {
-            return back()->withErrors('Reservation is already rejected.');
-        }
-
-        if ($reservation->status === 'Dispatched') {
-            return back()->withErrors('Cannot reject a dispatched reservation.');
-        }
-
-        if ($reservation->status !== 'Pending') {
-            return back()->withErrors('Only pending reservations can be rejected.');
-        }
-
-        $reservation->update(['status' => 'Rejected']);
-        AuditLog::record($request, 'Reservation rejected', 'Reservations', "Rejected reservation {$reservation->reservation_no}.");
-
-        return back()->with('success', 'Reservation rejected.');
+        return back()->with('success', 'Reservation rejected in central backend.');
     }
 }

@@ -15,6 +15,13 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class SettingsController extends Controller
 {
+    protected \App\Services\CentralAuthService $authService;
+
+    public function __construct(\App\Services\CentralAuthService $authService)
+    {
+        $this->authService = $authService;
+    }
+
     private const THEMES = ['light', 'dark'];
     private const DATE_FORMATS = ['M d, Y', 'd/m/Y', 'Y-m-d'];
     private const LOCALES = ['en', 'fil'];
@@ -28,6 +35,18 @@ class SettingsController extends Controller
             'email' => ['required', 'string', 'email', 'max:100', Rule::unique('users', 'email')->ignore($user->id)],
         ]);
 
+        // 1. Synchronize with Centralized Backend Service FIRST
+        $updated = $this->authService->updateProfile([
+            'name' => $data['name'],
+        ]);
+
+        if (!$updated && $this->authService->getClient()->getLastStatusCode() !== 404) {
+            $errorMsg = $this->authService->getClient()->getLastError()
+                ?? 'Failed to update profile on the centralized backend.';
+            return back()->withInput()->withErrors(['error' => $errorMsg]);
+        }
+
+        // 2. Only after centralized confirmation, update local record
         $user->name = $data['name'];
         $user->email = strtolower($data['email']);
         $user->save();
@@ -94,6 +113,16 @@ class SettingsController extends Controller
             return back()->withErrors(['current_password' => 'Your current password is incorrect.']);
         }
 
+        // 1. Synchronize with Centralized Backend Service FIRST
+        $updated = $this->authService->updatePassword($data['current_password'], $data['password']);
+
+        if (!$updated && $this->authService->getClient()->getLastStatusCode() !== 404) {
+            $errorMsg = $this->authService->getClient()->getLastError()
+                ?? 'Failed to update password on the centralized backend.';
+            return back()->withErrors(['error' => $errorMsg]);
+        }
+
+        // 2. Only after centralized confirmation, update local password
         $user->password = Hash::make($data['password']);
         $user->save();
 

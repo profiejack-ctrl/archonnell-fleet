@@ -32,6 +32,49 @@ class DatabaseSeeder extends Seeder
             ['name' => 'Reybie R.', $passwordField => Hash::make('password123'), 'role' => 'Admin', 'status' => 'active'],
         );
 
+        // $accounts = [
+        //     [
+        //         'name' => 'Maria Santos',
+        //         'email' => 'maria@fleetops.com',
+        //         'password' => 'maria123',
+        //         'role' => 'Manager',
+        //         'status' => 'active',
+        //     ],
+        //     [
+        //         'name' => 'Juan dela Cruz',
+        //         'email' => 'juan@fleetops.com',
+        //         'password' => 'juan123',
+        //         'role' => 'Dispatcher',
+        //         'status' => 'active',
+        //     ],
+        //     [
+        //         'name' => 'Ana Garcia',
+        //         'email' => 'ana@fleetops.com',
+        //         'password' => 'ana123',
+        //         'role' => 'Accountant',
+        //         'status' => 'active',
+        //     ],
+        //     [
+        //         'name' => 'Pedro Reyes',
+        //         'email' => 'pedro@fleetops.com',
+        //         'password' => 'pedro123',
+        //         'role' => 'Admin',
+        //         'status' => 'inactive',
+        //     ],
+        // ];
+
+        // foreach ($accounts as $account) {
+        //     User::updateOrCreate(
+        //         ['email' => $account['email']],
+        //         [
+        //             'name' => $account['name'],
+        //             $passwordField => Hash::make($account['password']),
+        //             'role' => $account['role'],
+        //             'status' => $account['status'],
+        //         ]
+        //     );
+        // }
+
         // Coherent sample data for local demos and project defense.
         $users = User::factory(9)->create(['role' => 'User', 'status' => 'active']);
         $vehicles = Vehicle::factory(10)->create();
