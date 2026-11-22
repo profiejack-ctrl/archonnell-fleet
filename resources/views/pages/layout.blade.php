@@ -10,9 +10,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="{{ asset('css/app.css') }}?v=20261002" />
     <script>
-        window.FLEETOPS_API_BASE = 'http://localhost:4000/api/v1/fleet';
-        window.ARCHON_GATEWAY_URL = 'http://localhost:4000';
-        window.ARCHON_AUTH_URL = 'http://localhost:4000/api/v1/auth';
+        window.FLEETOPS_API_BASE = '/api';
+        window.ARCHON_GATEWAY_URL = '';
+        window.ARCHON_AUTH_URL = '/api';
         try {
             const token = localStorage.getItem('archon_token');
             if (token) {
@@ -98,6 +98,13 @@
       [data-theme="dark"] .dark-mode-btn { background: #1a2840 !important; color: #e4eaf5 !important; }
       /* Dark mode topbar sun icon to indicate switch to light */
       [data-theme="dark"] #darkModeBtn svg { stroke: #f6c24f; }
+
+      .page-title {
+        margin: 0 0 16px !important;
+        color: var(--text);
+        font-size: 1.35rem;
+        font-weight: 800;
+      }
 
       /* ── Sidebar Shell ── */
       .sidebar {
@@ -587,10 +594,12 @@
                 'reports'         => ['label' => 'Reports',         'icon' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>'],
                 'notifications'   => ['label' => 'Notifications',   'icon' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>', 'badge' => 3],
                 'usermanagement'  => ['label' => 'User Management', 'icon' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>'],
+                'audit-logs'      => ['label' => 'Audit Logs', 'icon' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11z"/><path d="m9 12 2 2 4-4"/></svg>'],
                 'settings'        => ['label' => 'Settings',        'icon' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'],
             ];
             foreach ($navItems as $route => $item):
                 if ($route === 'usermanagement' && empty($dashboard['isAdmin'])) continue;
+                if ($route === 'audit-logs' && empty($dashboard['isAdmin'])) continue;
                 if ($route === 'driver-analytics') continue; // Hidden per admin/staff request
                 $href = $dashboard['basePath'] . ($route === 'dashboard' ? '/dashboard' : '/' . $route);
                 $isActive = $dashboard['page'] === $route;
@@ -662,6 +671,41 @@
 
         <h1 class="page-title"><?= htmlspecialchars($dashboard['title']) ?></h1>
 
+        <?php if (session('error') || (!empty($errors) && $errors->any())): ?>
+            <div style="background:#fef2f2;border:1px solid #f87171;color:#991b1b;padding:12px 18px;border-radius:10px;margin-bottom:18px;display:flex;align-items:center;gap:12px;font-weight:600;">
+                <span style="font-size:1.3rem;">❌</span>
+                <div>
+                    <div>Operation Failed</div>
+                    <div style="font-size:0.85rem;font-weight:400;color:#b91c1c;"><?= htmlspecialchars(session('error') ?? (!empty($errors) ? $errors->first() : ''), ENT_QUOTES, 'UTF-8') ?></div>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if (session('success')): ?>
+            <div style="background:#f0fdf4;border:1px solid #86efac;color:#166534;padding:12px 18px;border-radius:10px;margin-bottom:18px;display:flex;align-items:center;gap:12px;font-weight:600;">
+                <span style="font-size:1.3rem;">✅</span>
+                <div style="font-size:0.85rem;font-weight:400;color:#15803d;"><?= htmlspecialchars(session('success'), ENT_QUOTES, 'UTF-8') ?></div>
+            </div>
+        <?php endif; ?>
+
+        <?php if (!empty($dashboard['backendUnavailable'])): ?>
+            <div style="background:#fef2f2;border:1px solid #f87171;color:#991b1b;padding:12px 18px;border-radius:10px;margin-bottom:18px;display:flex;align-items:center;gap:12px;font-weight:600;">
+                <span style="font-size:1.3rem;">⚠️</span>
+                <div>
+                    <div>Centralized Backend Unavailable</div>
+                    <div style="font-size:0.85rem;font-weight:400;color:#b91c1c;"><?= htmlspecialchars($dashboard['backendError'] ?? 'The Archonnell API server is unreachable. No live records can be displayed.', ENT_QUOTES, 'UTF-8') ?></div>
+                </div>
+            </div>
+        <?php elseif (!empty($dashboard['endpointErrors'])): ?>
+            <div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;padding:12px 18px;border-radius:10px;margin-bottom:18px;display:flex;align-items:center;gap:12px;font-weight:600;">
+                <span style="font-size:1.3rem;">⚠️</span>
+                <div>
+                    <div>Centralized Endpoint Limitation</div>
+                    <div style="font-size:0.85rem;font-weight:400;color:#b45309;"><?= htmlspecialchars(implode(' · ', $dashboard['endpointErrors']), ENT_QUOTES, 'UTF-8') ?></div>
+                </div>
+            </div>
+        <?php endif; ?>
+
         @include('pages.'.$dashboard['page'], ['dashboard' => $dashboard])
     </main>
 </div>
@@ -732,6 +776,7 @@ document.addEventListener('DOMContentLoaded', function () {
         document.querySelectorAll('.sb-menu-logout').forEach(function (btn) {
             btn.addEventListener('click', function (e) {
                 e.stopPropagation();
+                try { localStorage.removeItem('fleetops.lastActivity'); } catch (e) {}
                 logoutForm.submit();
             });
         });

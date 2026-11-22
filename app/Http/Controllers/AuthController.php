@@ -49,7 +49,10 @@ class AuthController extends Controller
         if ($centralLogin) {
             $centralUser = $centralLogin['user'] ?? [];
             $globalRole = strtolower($centralUser['global_role'] ?? 'user');
-            $role = in_array($globalRole, ['superadmin', 'admin', 'fleet_manager', 'manager'], true) ? 'Admin' : ($globalRole === 'driver' ? 'Driver' : 'User');
+            $role = in_array($globalRole, ['superadmin', 'admin', 'manager'], true) ? 'Admin' : ($globalRole === 'driver' ? 'Driver' : 'User');
+            if (strtolower($credentials['email']) === 'fleet@archonnell.com') {
+                $role = 'User';
+            }
 
             $user = User::updateOrCreate(
                 ['email' => strtolower($credentials['email'])],
