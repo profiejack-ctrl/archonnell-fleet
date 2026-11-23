@@ -13,5 +13,19 @@ foreach ($tmpDirs as $dir) {
     }
 }
 
+// Ensure writable SQLite database exists in /tmp for serverless environment
+$tmpDb = '/tmp/database.sqlite';
+if (!file_exists($tmpDb) || filesize($tmpDb) === 0) {
+    $seedDb = __DIR__ . '/../database/database.sqlite';
+    if (file_exists($seedDb) && filesize($seedDb) > 0) {
+        @copy($seedDb, $tmpDb);
+    } else {
+        @touch($tmpDb);
+    }
+}
+if (file_exists($tmpDb)) {
+    @chmod($tmpDb, 0666);
+}
+
 // Forward Vercel requests to Laravel's index.php
 require __DIR__ . '/../public/index.php';
