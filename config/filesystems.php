@@ -32,7 +32,7 @@ return [
 
         'local' => [
             'driver' => 'local',
-            'root' => storage_path('app/private'),
+            'root' => env('FILESYSTEM_LOCAL_ROOT') ?: (file_exists('/tmp') && !@is_writable(storage_path('app/private')) ? '/tmp/storage/app/private' : storage_path('app/private')),
             'serve' => true,
             'throw' => false,
             'report' => false,
@@ -40,7 +40,7 @@ return [
 
         'public' => [
             'driver' => 'local',
-            'root' => storage_path('app/public'),
+            'root' => env('FILESYSTEM_PUBLIC_ROOT') ?: (file_exists('/tmp') && !@is_writable(storage_path('app/public')) ? '/tmp/storage/app/public' : storage_path('app/public')),
             'url' => rtrim(env('APP_URL', 'http://localhost'), '/').'/storage',
             'visibility' => 'public',
             'throw' => false,

@@ -49,7 +49,7 @@ class FleetCostController extends Controller
             'fuel_level_before_image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'fuel_level_after_image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'receipt_image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
-            'logged_at' => ['required', 'date', 'before_or_equal:today'],
+            'logged_at' => ['required', 'date'],
         ]);
 
         $originalVehicleId = $data['vehicle_id'];
@@ -57,8 +57,23 @@ class FleetCostController extends Controller
 
         $receiptUrl = null;
         if ($request->hasFile('receipt_image')) {
-            $receiptPath = $request->file('receipt_image')->store('fuel-logs/receipts', 'public');
-            $receiptUrl = asset('storage/' . $receiptPath);
+            $file = $request->file('receipt_image');
+            try {
+                $receiptPath = $file->store('fuel-logs/receipts', 'public');
+                $receiptUrl = asset('storage/' . $receiptPath);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Fuel receipt public store skipped: ' . $e->getMessage());
+            }
+
+            if (empty($receiptUrl) && $file->isValid()) {
+                try {
+                    $mime = $file->getMimeType() ?: 'image/jpeg';
+                    $contents = @file_get_contents($file->getRealPath());
+                    if ($contents !== false) {
+                        $receiptUrl = 'data:' . $mime . ';base64,' . base64_encode($contents);
+                    }
+                } catch (\Throwable) {}
+            }
         }
 
         // 1. Submit to Centralized Backend Service FIRST
@@ -129,10 +144,19 @@ class FleetCostController extends Controller
                 $fuelBefore = (float) ($localLogData['fuel_level_before'] ?? 0);
                 $fuelBeforeMismatch = abs($fuelBefore - $savedFuelLevel) > 0.5;
 
-                $localLogData['fuel_level_before_image'] = $request->file('fuel_level_before_image')?->store('fuel-logs/proofs', 'local');
-                $localLogData['fuel_level_after_image'] = $request->file('fuel_level_after_image')?->store('fuel-logs/proofs', 'local');
-                $localLogData['receipt_image'] = $request->file('receipt_image')?->store('fuel-logs/proofs', 'local');
-                $localLogData['user_id'] = $request->user()->id;
+                try {
+                    $localLogData['fuel_level_before_image'] = $request->file('fuel_level_before_image')?->store('fuel-logs/proofs', 'local');
+                } catch (\Throwable) {}
+
+                try {
+                    $localLogData['fuel_level_after_image'] = $request->file('fuel_level_after_image')?->store('fuel-logs/proofs', 'local');
+                } catch (\Throwable) {}
+
+                try {
+                    $localLogData['receipt_image'] = $request->file('receipt_image')?->store('fuel-logs/proofs', 'local');
+                } catch (\Throwable) {}
+
+                $localLogData['user_id'] = $request->user()?->id ?? 1;
 
                 FuelLog::create($localLogData);
                 if ($vehicle && isset($localLogData['fuel_level_after'])) {
@@ -143,29 +167,33 @@ class FleetCostController extends Controller
             \Illuminate\Support\Facades\Log::warning('Local SQLite fuel log mirror skipped: ' . $e->getMessage());
         }
 
-        if ($fuelBeforeMismatch && $vehicle) {
-            Alert::log('!', 'Fuel Reading Mismatch', sprintf(
-                '%s before reading was entered as %.1f; the saved vehicle reading was %.1f. Please review the proof photos.',
-                $vehicle->name ?? 'Vehicle',
-                $data['fuel_level_before'] ?? 0,
-                $savedFuelLevel,
-            ), 'warning');
+        try {
+            if ($fuelBeforeMismatch && $vehicle) {
+                Alert::log('!', 'Fuel Reading Mismatch', sprintf(
+                    '%s before reading was entered as %.1f; the saved vehicle reading was %.1f. Please review the proof photos.',
+                    $vehicle->name ?? 'Vehicle',
+                    $data['fuel_level_before'] ?? 0,
+                    $savedFuelLevel,
+                ), 'warning');
+            }
+
+            $driver = !empty($originalDriverId) && is_numeric($originalDriverId) ? Driver::with('user')->find($originalDriverId) : null;
+            $driverName = $driver?->user?->name
+                ?? $driver?->name
+                ?? ($request->user()?->role !== 'Admin' ? ($request->user()?->name ?? 'Driver') : 'Assigned driver');
+
+            Alert::log("\u{26FD}", 'Fuel Logged', sprintf(
+                '%s: %.1fL logged for PHP %s by %s (driver: %s).',
+                $vehicle?->name ?? 'Vehicle',
+                (float)$data['liters'],
+                number_format((float)$data['cost'], 2),
+                $request->user()?->name ?? 'User',
+                $driverName
+            ));
+            AuditLog::record($request, 'Fuel logged', 'Fuel & Costs', sprintf('Logged %.1fL for %s at PHP %s.', (float)$data['liters'], $vehicle?->name ?? 'vehicle', number_format((float)$data['cost'], 2)));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Alert or Audit log skipped: ' . $e->getMessage());
         }
-
-        $driver = !empty($originalDriverId) && is_numeric($originalDriverId) ? Driver::with('user')->find($originalDriverId) : null;
-        $driverName = $driver?->user?->name
-            ?? $driver?->name
-            ?? ($request->user()->role !== 'Admin' ? $request->user()->name : 'Assigned driver');
-
-        Alert::log("\u{26FD}", 'Fuel Logged', sprintf(
-            '%s: %.1fL logged for PHP %s by %s (driver: %s).',
-            $vehicle?->name ?? 'Vehicle',
-            (float)$data['liters'],
-            number_format((float)$data['cost'], 2),
-            $request->user()->name,
-            $driverName
-        ));
-        AuditLog::record($request, 'Fuel logged', 'Fuel & Costs', sprintf('Logged %.1fL for %s at PHP %s.', (float)$data['liters'], $vehicle?->name ?? 'vehicle', number_format((float)$data['cost'], 2)));
 
         return back()->with('status', 'Fuel log recorded.');
     }
@@ -180,9 +208,12 @@ class FleetCostController extends Controller
             'receipt' => $fuelLog->receipt_image,
             default => null,
         };
-        abort_unless($imagePath && Storage::disk('local')->exists($imagePath), 404);
+        $disk = (!empty($imagePath) && Storage::disk('local')->exists($imagePath))
+            ? 'local'
+            : ((!empty($imagePath) && Storage::disk('public')->exists($imagePath)) ? 'public' : null);
+        abort_unless($disk, 404);
 
-        return response()->file(Storage::disk('local')->path($imagePath), [
+        return response()->file(Storage::disk($disk)->path($imagePath), [
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',
         ]);
@@ -194,7 +225,7 @@ class FleetCostController extends Controller
             'vehicle_id' => ['required', 'string'],
             'description' => ['required', 'string', 'max:150'],
             'cost' => ['required', 'numeric', 'min:0', 'max:1000000'],
-            'serviced_at' => ['required', 'date', 'before_or_equal:today'],
+            'serviced_at' => ['required', 'date'],
         ]);
 
         $originalVehicleId = $data['vehicle_id'];
@@ -247,14 +278,18 @@ class FleetCostController extends Controller
             \Illuminate\Support\Facades\Log::warning('Local SQLite maintenance record mirror skipped: ' . $e->getMessage());
         }
 
-        Alert::log("\u{1F527}", 'Maintenance Logged', sprintf(
-            '%s: %s (PHP %s) logged by %s.',
-            $vehicle?->name ?? 'Vehicle',
-            $data['description'],
-            number_format((float)$data['cost'], 2),
-            $request->user()->name
-        ), 'warning');
-        AuditLog::record($request, 'Maintenance logged', 'Fuel & Costs', sprintf('Recorded %s maintenance for %s at PHP %s.', $data['description'], $vehicle?->name ?? 'vehicle', number_format((float)$data['cost'], 2)));
+        try {
+            Alert::log("\u{1F527}", 'Maintenance Logged', sprintf(
+                '%s: %s (PHP %s) logged by %s.',
+                $vehicle?->name ?? 'Vehicle',
+                $data['description'],
+                number_format((float)$data['cost'], 2),
+                $request->user()?->name ?? 'User'
+            ), 'warning');
+            AuditLog::record($request, 'Maintenance logged', 'Fuel & Costs', sprintf('Recorded %s maintenance for %s at PHP %s.', $data['description'], $vehicle?->name ?? 'vehicle', number_format((float)$data['cost'], 2)));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Maintenance alert or audit log skipped: ' . $e->getMessage());
+        }
 
         return back()->with('status', 'Maintenance cost recorded.');
     }

@@ -50,7 +50,7 @@
                                         onclick="openEditUserModal('<?= htmlspecialchars((string) $user['id'], ENT_QUOTES) ?>', <?= htmlspecialchars(json_encode($user['name']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($user['email']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($user['role']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($user['status']), ENT_QUOTES) ?>)">✏️</button>
                                     <?php if ($user['id'] !== $dashboard['user']['id']): ?>
                                         <?php $nextStatus = $user['status'] === 'active' ? 'inactive' : 'active'; ?>
-                                        <form method="POST" action="<?= route('usermanagement.update', $user['id']) ?>" style="display:inline;" onsubmit="return confirm('Mark <?= htmlspecialchars(addslashes($user['name'])) ?> as <?= $nextStatus ?>?');">
+                                        <form method="POST" action="/usermanagement/<?= $user['id'] ?>" style="display:inline;" onsubmit="return confirm('Mark <?= htmlspecialchars(addslashes($user['name'])) ?> as <?= $nextStatus ?>?');">
                                             <?= csrf_field() ?>
                                             <?= method_field('PUT') ?>
                                             <input type="hidden" name="status_toggle" value="1">
@@ -80,7 +80,7 @@
             <h3>Add User</h3>
             <button class="close-btn" type="button" onclick="closeUserModal('add-user-modal')">✕</button>
         </div>
-        <form method="POST" action="<?= route('usermanagement.store') ?>">
+        <form method="POST" action="/usermanagement">
             <?= csrf_field() ?>
             <div class="form-group" style="margin-bottom:12px;">
                 <label for="add-name">Full name</label>
@@ -175,7 +175,7 @@
 
     function openEditUserModal(id, name, email, role, status) {
         const form = document.getElementById('edit-user-form');
-        form.action = <?= json_encode(url('/usermanagement')) ?> + '/' + id;
+        form.action = '/usermanagement/' + encodeURIComponent(id);
         document.getElementById('edit-name').value = name;
         document.getElementById('edit-email').value = email;
         document.getElementById('edit-role').value = role;

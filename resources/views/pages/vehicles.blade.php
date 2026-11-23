@@ -88,7 +88,7 @@ foreach (($dashboard['vehicles'] ?? []) as $fleetVehicle) {
             <h3>+ Add New Vehicle</h3>
             <button class="close-btn" onclick="closeAddVehicleModal()">✕</button>
         </div>
-        <form id="vehicle-form" method="POST" action="<?= route('vehicles.store') ?>">
+        <form id="vehicle-form" method="POST" action="/vehicles">
             <?= csrf_field() ?>
             <input type="hidden" id="vehicle-method" name="_method" value="">
             <div class="form-grid">

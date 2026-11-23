@@ -117,7 +117,7 @@ $breakdown = $finance['breakdown'];
             <h3>Log Maintenance Expense</h3>
             <button class="close-btn" type="button" onclick="closeExpenseModal()">✕</button>
         </div>
-        <form method="POST" action="<?= route('maintenance.store') ?>">
+        <form method="POST" action="/maintenance">
             <?= csrf_field() ?>
             <div class="form-group" style="margin-bottom:12px;">
                 <label for="expense-vehicle">Vehicle</label>
@@ -149,7 +149,7 @@ $breakdown = $finance['breakdown'];
     <div class="modal-card trip-expense-modal-card">
         <div class="modal-header"><div><p class="eyebrow">Trip reimbursement record</p><h3 id="trip-expense-title">Add trip expense</h3></div><button class="close-btn" type="button" onclick="closeTripExpenseModal()" aria-label="Close">×</button></div>
         <p class="trip-expense-intro">Save meals, parking, or other trip costs. A receipt photo is required so the expense can be reviewed.</p>
-        <form method="POST" action="<?= $dashboard['isAdmin'] ? route('trip-expenses.store') : route('users.trip-expenses.store') ?>" enctype="multipart/form-data">
+        <form method="POST" action="<?= $dashboard['isAdmin'] ? '/trip-expenses' : '/users/trip-expenses' ?>" enctype="multipart/form-data">
             <?= csrf_field() ?>
             <div class="form-group" style="margin-bottom:12px;">
                 <label for="trip-expense-category">Expense type</label>

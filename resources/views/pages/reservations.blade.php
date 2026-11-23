@@ -355,12 +355,12 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
                                 <td>
                                     <?php if ($dashboard['isAdmin']): ?><div style="display:flex;gap:6px;flex-wrap:wrap;">
                                         <?php /* Approve */ ?>
-                                        <form method="POST" action="<?= route('reservations.approve', $r->id) ?>" style="display:inline;">
+                                        <form method="POST" action="/reservations/<?= $r->id ?>/approve" style="display:inline;">
                                             <?= csrf_field() ?>
                                             <button type="submit" class="act-btn act-approve" title="Approve">✓ Approve</button>
                                         </form>
                                         <?php /* Reject */ ?>
-                                        <form method="POST" action="<?= route('reservations.reject', $r->id) ?>" style="display:inline;"
+                                        <form method="POST" action="/reservations/<?= $r->id ?>/reject" style="display:inline;"
                                               onsubmit="return confirm('Reject this reservation?');">
                                             <?= csrf_field() ?>
                                             <button type="submit" class="act-btn act-reject" title="Reject">✕ Reject</button>
@@ -571,7 +571,7 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
             <h3>New Reservation</h3>
             <button type="button" class="close-btn" onclick="closeHubModal('modal-new-reservation')">✕</button>
         </div>
-        <form id="new-reservation-form" method="POST" action="<?= route($dashboard['isAdmin'] ? 'reservations.store' : 'users.reservations.store') ?>">
+        <form id="new-reservation-form" method="POST" action="<?= $dashboard['isAdmin'] ? '/reservations' : '/users/reservations' ?>">
             <?= csrf_field() ?>
             <div class="modal-body">
                 <?php
@@ -663,7 +663,7 @@ $drivers      = $dashboard['availableDrivers']       ?? [];
             <h3>Direct Dispatch</h3>
             <button type="button" class="close-btn" onclick="closeHubModal('modal-direct-dispatch')">✕</button>
         </div>
-        <form method="POST" action="<?= route('dispatches.store') ?>">
+        <form method="POST" action="/dispatches">
             <?= csrf_field() ?>
             <div class="modal-body">
                 <div class="form-group">

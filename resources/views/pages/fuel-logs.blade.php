@@ -97,7 +97,7 @@ $driverOptions = $dashboard['driverOptions'] ?? collect();
             <button class="close-btn" type="button" aria-label="Close form" onclick="closeFuelModal()">×</button>
         </div>
         <p class="fuel-modal-copy">Enter the fuel amount and the total paid on the receipt.</p>
-        <form method="POST" action="<?= $dashboard['isAdmin'] ? route('fuel-logs.store') : route('users.fuel-logs.store') ?>" id="fuel-form" enctype="multipart/form-data">
+        <form method="POST" action="<?= $dashboard['isAdmin'] ? '/fuel-logs' : '/users/fuel-logs' ?>" id="fuel-form" enctype="multipart/form-data">
             <?= csrf_field() ?>
             <div class="form-group fuel-field">
                 <label for="fuel-vehicle">Vehicle</label>

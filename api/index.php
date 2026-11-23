@@ -1,10 +1,20 @@
 <?php
 
-// Ensure serverless temporary storage directories exist for blade views, cache, and sessions
+// Ensure serverless temporary storage directories exist for blade views, cache, sessions, and uploads
 $tmpDirs = [
     '/tmp/views',
     '/tmp/cache',
     '/tmp/sessions',
+    '/tmp/storage',
+    '/tmp/storage/app',
+    '/tmp/storage/app/public',
+    '/tmp/storage/app/private',
+    '/tmp/storage/app/public/trip-expenses',
+    '/tmp/storage/app/public/trip-expenses/receipts',
+    '/tmp/storage/app/public/fuel-logs',
+    '/tmp/storage/app/public/fuel-logs/receipts',
+    '/tmp/storage/app/private/fuel-logs',
+    '/tmp/storage/app/private/fuel-logs/proofs',
 ];
 
 foreach ($tmpDirs as $dir) {

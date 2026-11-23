@@ -35,7 +35,7 @@
 
 <section class="panel">
     <div class="panel-header"><div><p class="eyebrow">Activity history</p><h3>Recent events</h3></div></div>
-    <form method="GET" action="<?= route('audit-logs') ?>" class="audit-toolbar">
+    <form method="GET" action="/audit-logs" class="audit-toolbar">
         <input type="search" name="search" value="<?= htmlspecialchars(request('search', ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Search people or activity" aria-label="Search audit logs">
         <select name="module" aria-label="Filter by area">
             <option value="">All areas</option>

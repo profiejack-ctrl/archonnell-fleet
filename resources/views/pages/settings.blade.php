@@ -39,7 +39,7 @@ $prefs = $user['preferences'] ?? ['theme' => 'light', 'date_format' => 'M d, Y',
                 <div class="profile-picture-content">
                     <strong>Profile picture</strong>
                     <p>Choose a photo to personalize your account across FleetOps.</p>
-                    <form method="POST" action="<?= route('settings.profile-photo') ?>" enctype="multipart/form-data" class="profile-photo-form">
+                    <form method="POST" action="/settings/profile-photo" enctype="multipart/form-data" class="profile-photo-form">
                         <?= csrf_field() ?>
                         <label class="profile-photo-picker" for="profile-photo">Choose photo</label>
                         <input type="file" id="profile-photo" name="profile_photo" accept="image/jpeg,image/png,image/webp" required>
@@ -49,7 +49,7 @@ $prefs = $user['preferences'] ?? ['theme' => 'light', 'date_format' => 'M d, Y',
                 </div>
             </div>
             <?php if ($dashboard['isAdmin']): ?>
-            <form method="POST" action="<?= route('settings.profile') ?>" class="settings-form">
+            <form method="POST" action="/settings/profile" class="settings-form">
                 <?= csrf_field() ?>
                 <?= method_field('PUT') ?>
                 <div class="form-group">
@@ -77,7 +77,7 @@ $prefs = $user['preferences'] ?? ['theme' => 'light', 'date_format' => 'M d, Y',
                 <span class="settings-icon" aria-hidden="true">🔒</span>
                 <div><h4 id="security-heading">Security</h4><p>Choose a new password for your account.</p></div>
             </div>
-            <form method="POST" action="<?= route('settings.password') ?>" class="settings-form">
+            <form method="POST" action="/settings/password" class="settings-form">
                 <?= csrf_field() ?>
                 <?= method_field('PUT') ?>
                 <fieldset style="display:contents;border:0;padding:0;" <?= $dashboard['isAdmin'] ? '' : 'disabled' ?>>
@@ -106,7 +106,7 @@ $prefs = $user['preferences'] ?? ['theme' => 'light', 'date_format' => 'M d, Y',
                 <span class="settings-icon" aria-hidden="true">⚙️</span>
                 <div><h4 id="preferences-heading">Display preferences</h4><p>Choose how the dashboard looks and displays dates.</p></div>
             </div>
-            <form method="POST" action="<?= route('settings.preferences') ?>" class="settings-form settings-preferences-form">
+            <form method="POST" action="/settings/preferences" class="settings-form settings-preferences-form">
                 <?= csrf_field() ?>
                 <?= method_field('PUT') ?>
                 <fieldset style="display:contents;border:0;padding:0;" <?= $dashboard['isAdmin'] ? '' : 'disabled' ?>>
