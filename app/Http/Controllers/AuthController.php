@@ -39,7 +39,7 @@ class AuthController extends Controller
         // 1. Verify that the Centralized Backend is reachable
         if (!$client->isAvailable()) {
             return back()->withErrors([
-                'email' => 'The Centralized Backend server (Archonnell) is currently offline or unreachable. Please start the backend service on port 4000.'
+                'email' => 'The Centralized Backend server (' . $client->getBaseUrl() . ') is currently offline or unreachable. Please verify your connection.'
             ])->onlyInput('email');
         }
 

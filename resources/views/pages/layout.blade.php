@@ -11,8 +11,8 @@
     <link rel="stylesheet" href="{{ asset('css/app.css') }}?v=20261002" />
     <script>
         window.FLEETOPS_API_BASE = '/api';
-        window.ARCHON_GATEWAY_URL = '';
-        window.ARCHON_AUTH_URL = '/api';
+        window.ARCHON_GATEWAY_URL = '{{ config('services.central_api.base_url') }}';
+        window.ARCHON_AUTH_URL = '{{ config('services.central_api.auth_url') }}';
         try {
             const token = localStorage.getItem('archon_token');
             if (token) {

@@ -26,7 +26,7 @@ class CentralApiClient
             ?? config('services.central_api.base_url')
             ?? env('CENTRAL_API_URL')
             ?? env('CENTRAL_GATEWAY_URL')
-            ?? 'http://localhost:4000/api/v1';
+            ?? 'https://api.archonnellincorporated.com/api/v1';
 
         // Strip trailing /fleet or /fleet/ to ensure baseUrl is always the root gateway /api/v1
         $rawUrl = preg_replace('#/fleet/?$#i', '', $rawUrl);
@@ -106,7 +106,7 @@ class CentralApiClient
     {
         try {
             $rootHealthUrl = preg_replace('#/api/v1.*$#', '', $this->baseUrl) . '/health';
-            $response = Http::timeout(2)->get($rootHealthUrl);
+            $response = Http::timeout(max(5, $this->timeout))->get($rootHealthUrl);
             return $response->successful();
         } catch (\Throwable) {
             return false;

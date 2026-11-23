@@ -1038,7 +1038,7 @@ function handleStartTrip() {
     showTripMsg(`Trip Started – ${driver}`, `${vehicle} | ${origin} → ${dest} | Depart: ${now.toLocaleTimeString()}`);
 
     // Simulate POST to /api/trip/start via Central Gateway
-    const fleetApiBase = window.FLEETOPS_API_BASE || 'http://localhost:4000/api/v1/fleet';
+    const fleetApiBase = window.FLEETOPS_API_BASE || '/api';
     fetch(fleetApiBase + '/trip/start', {
         method: 'POST',
         headers:{ 'Content-Type':'application/json' },
@@ -1131,7 +1131,7 @@ function syncHR3() {
     const msg = document.getElementById('hr3-msg');
     msg.textContent = '⏳ Syncing attendance from HR3…';
     msg.style.display = 'block';
-    const fleetApiBase = window.FLEETOPS_API_BASE || 'http://localhost:4000/api/v1/fleet';
+    const fleetApiBase = window.FLEETOPS_API_BASE || '/api';
     fetch(fleetApiBase + '/integration/system', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ system:'hr3_workforce_operations' })
