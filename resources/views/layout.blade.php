@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="{{ asset('css/app.css') }}?v=20261002" />
+    <link rel="stylesheet" href="/css/app.css?v=20261002" />
     <script>
         window.FLEETOPS_API_BASE = '/api';
         window.ARCHON_GATEWAY_URL = '{{ config('services.central_api.base_url') }}';
@@ -711,7 +711,7 @@
 </div>
 
 <!-- Hidden Logout Form -->
-<form id="logoutForm" method="post" action="{{ route('logout') }}" style="display: none;">
+<form id="logoutForm" method="post" action="/logout" style="display: none;">
     @csrf
 </form>
 

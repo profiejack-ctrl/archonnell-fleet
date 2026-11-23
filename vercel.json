@@ -14,12 +14,28 @@
       "dest": "/public/build/$1"
     },
     {
+      "src": "/css/(.*)",
+      "dest": "/public/css/$1"
+    },
+    {
+      "src": "/images/(.*)",
+      "dest": "/public/images/$1"
+    },
+    {
+      "src": "/logo.png",
+      "dest": "/public/logo.png"
+    },
+    {
       "src": "/favicon.ico",
       "dest": "/public/favicon.ico"
     },
     {
       "src": "/robots.txt",
       "dest": "/public/robots.txt"
+    },
+    {
+      "src": "/(.*\\.(?:css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot))",
+      "dest": "/public/$1"
     },
     {
       "src": "/(.*)",
@@ -38,6 +54,12 @@
     "APP_PACKAGES_CACHE": "/tmp/packages.php",
     "APP_ROUTES_CACHE": "/tmp/routes.php",
     "APP_SERVICES_CACHE": "/tmp/services.php",
-    "VIEW_COMPILED_PATH": "/tmp/views"
+    "VIEW_COMPILED_PATH": "/tmp/views",
+    "CENTRAL_API_URL": "https://api.archonnellincorporated.com/api/v1",
+    "CENTRAL_AUTH_URL": "https://api.archonnellincorporated.com/api/v1/auth",
+    "CENTRAL_GATEWAY_URL": "https://api.archonnellincorporated.com",
+    "VITE_API_URL": "https://api.archonnellincorporated.com/api/v1/fleet",
+    "VITE_AUTH_URL": "https://api.archonnellincorporated.com/api/v1/auth",
+    "VITE_GATEWAY_URL": "https://api.archonnellincorporated.com"
   }
 }

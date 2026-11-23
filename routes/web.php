@@ -107,3 +107,28 @@ Route::prefix('api')->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\
     Route::get('/driver/reports', [ApiController::class, 'getDriverReports']);
     Route::get('/driver/{driverId}/performance', [ApiController::class, 'getDriverPerformance'])->whereNumber('driverId');
 });
+
+// Static assets fallback routes for serverless / reverse-proxy environments
+Route::get('/images/{file}', function (string $file) {
+    $path = public_path('images/' . $file);
+    if (!file_exists($path)) {
+        abort(404);
+    }
+    return response()->file($path);
+})->where('file', '.*');
+
+Route::get('/logo.png', function () {
+    $path = public_path('logo.png');
+    if (!file_exists($path)) {
+        abort(404);
+    }
+    return response()->file($path);
+});
+
+Route::get('/css/{file}', function (string $file) {
+    $path = public_path('css/' . $file);
+    if (!file_exists($path)) {
+        abort(404);
+    }
+    return response()->file($path, ['Content-Type' => 'text/css']);
+})->where('file', '.*');
