@@ -270,7 +270,7 @@
                         : '/images/logo.png';
                 @endphp
                 <img src="{{ $logoSrc }}" alt="Archon Nell Incorporated" class="brand-logo-img">
-                <p class="subtitle">Performance & Development Management</p>
+                <p class="subtitle">Fleet Operation</p>
             </div>
 
             <!-- Status & Error Flash Messages -->
